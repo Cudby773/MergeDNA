@@ -29,19 +29,18 @@ class Unmerge(nn.Module):
         self.eps = eps
 
 
-    def forward(self, merged_feats: torch.Tensor, source_maps: list[torch.LongTensor]) -> torch.Tensor:
+    def forward(self, merged_feats: torch.Tensor, source_index: torch.LongTensor) -> torch.Tensor:
         """
         Args:
             merged_feats: (B, M, D)
-            source_idx:    (B, L) long mapping each original position to merged index in [0..M-1]
+            source_index:    (B, L) long mapping each original position to merged index in [0..M-1]
 
         Returns:
-            unmerged_feats: (B, L, D) where position j receives merged_feats[..., source_idx[..., j], :]
+            unmerged_feats: (B, L, D) where position j receives merged_feats[..., source_index[..., j], :]
         """
         B, M, D = merged_feats.shape
-        source_idx = compose_source_maps(source_maps)
-        B2, L = source_idx.shape
-        assert B == B2, "batch mismatch between merged_feats and source_idx"
+        B2, L = source_index.shape
+        assert B == B2, "batch mismatch between merged_feats and source_index"
 
         device = merged_feats.device
         # Optionally normalize merged_feats by counts per merged token
@@ -49,14 +48,14 @@ class Unmerge(nn.Module):
             # compute counts per merged token: (B, M)
             ones = torch.ones((B, L), dtype=merged_feats.dtype, device=device)
             counts = torch.zeros((B, M), dtype=merged_feats.dtype, device=device)
-            counts = counts.scatter_add_(1, source_idx, ones)  # (B, M)
+            counts = counts.scatter_add_(1, source_index, ones)  # (B, M)
             # clamp to avoid div by zero if some merged tokens are unused (shouldn't happen)
             counts = counts.clamp_min(self.eps)
             # divide merged_feats by counts per merged token
             merged_feats = merged_feats / counts.unsqueeze(-1)  # (B, M, 1) -> broadcast
 
-        # gather: expand source_idx to (B, L, D) index tensor and gather along dim=1
-        source_idx_exp = source_idx.unsqueeze(-1).expand(-1, -1, D)  # (B, L, D)
+        # gather: expand source_index to (B, L, D) index tensor and gather along dim=1
+        source_idx_exp = source_index.unsqueeze(-1).expand(-1, -1, D)  # (B, L, D)
         unmerged = torch.gather(merged_feats, dim=1, index=source_idx_exp)  # (B, L, D)
         return unmerged
 

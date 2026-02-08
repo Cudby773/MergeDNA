@@ -15,19 +15,19 @@ def main(device: str):
     vocab_size = 4
     embed_dim = 32
     latent_d_model = 64
-
+    layer_configs=[{'window_size': 30, 'r':3}]*2
+    
     # instantiate modules
     local_enc = LocalEncoder(
         vocab_size, 
         d_model=embed_dim, 
         nhead=4, 
-        layer_configs=[{'window_size': 30, 'r':3}]*2, 
-        token_merge_factory=lambda r: TokenMerge(r)
+        layer_configs=layer_configs, 
     ).to(device)
 
     latent_enc = LatentEncoder(d_model=latent_d_model, input_dim=embed_dim).to(device)
     latent_dec = LatentDecoder(d_model=latent_d_model, input_dim=latent_enc.d_model, output_dim=embed_dim).to(device)
-    local_dec = LocalDecoder(d_model=embed_dim, vocab_size=vocab_size).to(device)
+    local_dec = LocalDecoder(d_model=embed_dim, vocab_size=vocab_size, layer_configs=layer_configs).to(device)
     merge_dna_model = MergeDNAModel(local_enc, latent_enc, latent_dec, local_dec)
 
     # toy optimizer
