@@ -14,8 +14,8 @@ def make_model_small(vocab_size=6, d_model=64, nhead=4):
     def tm_factory(r):
         return TokenMerge(r=r)
     local_enc = LocalEncoder(vocab_size=vocab_size, d_model=d_model, nhead=nhead, layer_configs=layer_configs, token_merge_factory=tm_factory)
-    latent_enc = LatentEncoder(d_model=d_model, nhead=nhead)
-    latent_dec = LatentDecoder(d_model=d_model)
+    latent_enc = LatentEncoder(d_model=d_model, nhead=nhead, num_layers=8)
+    latent_dec = LatentDecoder(d_model=d_model, num_layers=4)
     local_dec = LocalDecoder(d_model=d_model, vocab_size=vocab_size)
     model = MergeDNAModel(local_enc, latent_enc, latent_dec, local_dec)
     return model

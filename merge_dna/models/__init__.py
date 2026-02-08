@@ -1,3 +1,4 @@
+from .positional_encoding import PositionalEncoding
 from .local_encoder import LocalEncoder
 from .latent_encoder import LatentEncoder
 from .local_decoder import LocalDecoder

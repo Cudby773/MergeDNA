@@ -50,10 +50,10 @@ def main(device: str):
                 pass
             
         # forward
-        merged, source_index = local_enc(x)         # (B, M, D)
-        latent = latent_enc(merged)                 # (B, M, D)
-        decoded_latent = latent_dec(latent)         # (B, M, D)
-        logits = local_dec(decoded_latent, source_index)  # (B, L_trunc, V)
+        merged, source_index = local_enc.forward(x)         # (B, M, D)
+        latent = latent_enc.forward(merged)                 # (B, M, D)
+        decoded_latent = latent_dec.forward(latent)         # (B, M, D)
+        logits = local_dec.forward(decoded_latent, source_index)  # (B, L_trunc, V)
 
         # loss: cross-entropy over flattened positions
         loss_fn = nn.CrossEntropyLoss()
