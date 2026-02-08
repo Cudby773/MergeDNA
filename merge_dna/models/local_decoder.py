@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from .local_attention import LocalAttention
 from .unmerge import Unmerge
 
@@ -29,8 +30,18 @@ class LocalUnmergeBlock(nn.Module):
         expanded: (B, L_expanded, D)
         returns refined: (B, L_expanded, D)
         """
-        x_attn_unfolded, _, _ = self.attn.forward(expanded)  # (B, L_expanded, D)
+        L = expanded.shape[1]
+        W = self.window_size
+        pad_len = (W - (L % W)) % W
+        if pad_len > 0:
+            expanded = F.pad(expanded, (0, 0, 0, pad_len))  # pads seq dim on the right
 
+        x_attn_unfolded, _, _ = self.attn.forward(expanded)
+
+        # trim any padded positions
+        if pad_len > 0:
+            x_attn_unfolded = x_attn_unfolded[:, :L, :]
+            expanded = expanded[:, :L, :]
         return self.ln(expanded + x_attn_unfolded)
 
 

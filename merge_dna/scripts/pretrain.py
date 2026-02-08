@@ -2,7 +2,7 @@ import argparse
 import torch
 
 from merge_dna.models import (
-    LocalEncoder, LatentEncoder, LatentDecoder, LocalDecoder, MergeDNAModel, TokenMerge
+    LocalEncoder, LatentEncoder, LatentDecoder, LocalDecoder, MergeDNAModel
 )
 from merge_dna.training.optim import make_optimizer_and_scheduler
 from merge_dna.training.trainer import Trainer
