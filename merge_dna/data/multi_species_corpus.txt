@@ -1,0 +1,9 @@
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Robbsia_andropogonis/latest_assembly_versions/GCF_000566705.1_Ba3549/GCF_000566705.1_Ba3549_genomic.fna.gz
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Nitrospirillum_amazonense/latest_assembly_versions/GCF_000225995.1_ASM22599v1/GCF_000225995.1_ASM22599v1_genomic.fna.gz
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/invertebrate/Chelonus_insularis/latest_assembly_versions/GCF_013357705.1_ASM1335770v1/GCF_013357705.1_ASM1335770v1_genomic.fna.gz 
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Falsiruegeria_litorea/latest_assembly_versions/GCF_018619345.1_ASM1861934v1/GCF_018619345.1_ASM1861934v1_genomic.fna.gz
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Floricoccus_penangensis/latest_assembly_versions/GCF_001832885.1_ASM183288v1/GCF_001832885.1_ASM183288v1_genomic.fna.gz
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Paraflavitalea_devenefica/latest_assembly_versions/GCF_011759375.1_ASM1175937v1/GCF_011759375.1_ASM1175937v1_genomic.fna.gz 
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Rubrivirga_marina/latest_assembly_versions/GCF_002283365.1_ASM228336v1/GCF_002283365.1_ASM228336v1_genomic.fna.gz
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Sinirhodobacter_ferrireducens/latest_assembly_versions/GCF_004022265.1_ASM402226v1/GCF_004022265.1_ASM402226v1_genomic.fna.gz
+https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/Pediococcus_acidilactici/latest_assembly_versions/GCF_000146325.1_ASM14632v1/GCF_000146325.1_ASM14632v1_genomic.fna.gz  
