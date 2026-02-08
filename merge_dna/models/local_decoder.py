@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .local_attention import LocalAttention
-from .token_unmerge import Unmerge
+from .token_unmerge import TokenUnmerge
 
 
 class LocalUnmergeBlock(nn.Module):
@@ -68,7 +68,7 @@ class LocalDecoder(nn.Module):
         self.vocab_size = vocab_size
         # Store configs in encoder order; decoder will iterate reversed(...)
         self.layer_configs = layer_configs
-        self.unmerge = Unmerge(normalize=normalize_unmerge)
+        self.unmerge = TokenUnmerge(normalize=normalize_unmerge)
         # build a LocalUnmergeBlock per layer (in encoder order)
         self.blocks = nn.ModuleList()
         for cfg in self.layer_configs:

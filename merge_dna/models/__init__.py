@@ -3,7 +3,7 @@ from .latent_encoder import LatentEncoder
 from .local_decoder import LocalDecoder
 from .latent_decoder import LatentDecoder
 from .token_merge import TokenMerge
-from .token_unmerge import Unmerge
+from .token_unmerge import TokenUnmerge
 from .heads import Heads
 from .merge_dna import MergeDNAModel
 
@@ -13,7 +13,7 @@ __all__ = [
     "LocalDecoder",
     "LatentDecoder",
     "TokenMerge",
-    "Unmerge",
+    "TokenUnmerge",
     "Heads",
     "MergeDNAModel"
 ]

@@ -10,7 +10,7 @@ from merge_dna.data import make_multi_species_genome_data_loader
 
 
 def make_model_small(vocab_size=6, embed_dim = 32, latent_d_model=64, nhead=4):
-    layer_configs = [{"window_size": 8, "r": 2}, {"window_size": 8, "r": 2}]
+    layer_configs = [{"window_size": 16, "r": 2}, {"window_size": 16, "r": 2}, {"window_size": 16, "r": 3}, {"window_size": 16, "r": 3}]
     local_enc = LocalEncoder(vocab_size=vocab_size, d_model=embed_dim, nhead=nhead, layer_configs=layer_configs)
     latent_enc = LatentEncoder(d_model=latent_d_model, input_dim=embed_dim, nhead=nhead, num_layers=2)
     latent_dec = LatentDecoder(d_model=latent_d_model, input_dim=latent_enc.d_model, output_dim=embed_dim, num_layers=1)

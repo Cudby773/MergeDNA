@@ -14,7 +14,7 @@ def compose_source_maps(source_maps: list[torch.LongTensor]) -> torch.Tensor:
     return source
 
    
-class Unmerge(nn.Module):
+class TokenUnmerge(nn.Module):
     """
     Inverse of TokenMerge.
     Expects:

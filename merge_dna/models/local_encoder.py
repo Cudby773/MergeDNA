@@ -12,6 +12,7 @@ class LocalMergeBlock(nn.Module):
     Returns:
         merged: (B, L_next, D)
         source_index: (B, L_trunc) mapping original positions to merged indices
+        merge_scores: (B, L) 
     """
     def __init__(self, d_model: int, nhead: int, window_size: int, r: int, token_merge: TokenMerge):
         """
@@ -66,7 +67,6 @@ class LocalMergeBlock(nn.Module):
         merge_scores = merge_scores_windows.view(B, num_windows * self.M_w)
         source_index_by_abs = self.build_source_index(prev_to_new_windows, B, W, num_windows, L_trunc, device)
 
-
         # Finally, trim padding if any
         if pad_len > 0:
             source_index_by_abs = source_index_by_abs[:, :L]   # L is original length before padding
@@ -110,13 +110,14 @@ class LocalEncoder(nn.Module):
             merge_scores_list: per layer scores
         """
         x = self.emb(x)
+        print(f'Local encoder, x shape: {x.shape}')
         source_maps = []
         merge_scores_list = []
-        B, T_orig, _ = x.shape
         for layer in self.layers:
             # each layer.forward now returns (merged, source_index_by_abs, merge_scores)
             merged, source_index, merge_scores = layer(x)
             source_maps.append(source_index)
             merge_scores_list.append(merge_scores)  # (B, M_layer)
             x = merged  # next layer runs on compressed sequence
+            print(f'Local encoder, x shape: {x.shape}')
         return x, source_maps, merge_scores_list

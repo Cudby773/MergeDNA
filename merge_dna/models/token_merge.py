@@ -48,9 +48,9 @@ class TokenMerge(nn.Module):
         Returns:
             merged: (B, M_new, C)
             prev_to_new: (B, T_prev) long mapping from indices in this layer's input -> new merged idx (or -1)
-            source_index: (B, T_prev_orig) optional mapping from original base positions -> new merged indices (if you still compute it here)
             merge_scores: (B, M_new) float scores per merged token (norm or learned)
         """
+        print(f'Token merge x.shape: {x.shape}')
         B, T_prev, C = x.shape
         device = x.device
         
@@ -81,13 +81,15 @@ class TokenMerge(nn.Module):
 
         src_sel = torch.gather(src, dim=1, index=src_idx.unsqueeze(-1).expand(-1, -1, C))
         unm = torch.gather(src, dim=1, index=unm_sorted.unsqueeze(-1).expand(-1, -1, C))
+        print(f'Token merge unm.shape: {unm.shape}')
 
         dst_updated = dst.clone()
         dst_idx = node_idx.gather(dim=1, index=src_idx)  # (B, r) - indices into dst (0..Tb-1)
         dst_updated = dst_updated.scatter_add(1, dst_idx.unsqueeze(-1).expand(-1, -1, C), src_sel)
+        print(f'Token merge dst_updated.shape: {dst_updated.shape}')
 
         merged = torch.cat([unm, dst_updated], dim=1)  # (B, M_new, C) where M_new = (Ta - r) + Tb
-
+        print(f'Token merge merged.shape: {merged.shape}')
         prev_to_new = torch.full((B, T_prev), -1, dtype=torch.long, device=device)
 
         if unm_sorted.numel() > 0:

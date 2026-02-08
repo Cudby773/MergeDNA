@@ -224,7 +224,7 @@ class Trainer:
         # ---------------------------
         # detach merged to prevent grads to tokenizer (TokenMerge etc)
         merged_detached = merged.detach()
-        latent_det = model.latent_encoder(merged_detached)
+        latent_det = model.latent_encoder.forward(merged_detached, token_merge=True)
         decoded_det = model.latent_decoder(latent_det)
         logits_det = model.local_decoder(decoded_det, source_maps)
         perpos_loss2 = self.loss_fn(logits_det.view(-1, logits_det.size(-1)), targets_flat).view(B, L)

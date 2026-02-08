@@ -181,7 +181,7 @@ if not GENOMES_DIR.exists():
 # Accept .fa, .fna, with or without .gz
 files = sorted([p for p in GENOMES_DIR.glob("*") if p.is_file() and any(suffix in "".join(p.suffixes) for suffix in [".fa", ".fna"])])
 
-chunk_length = 6000
+chunk_length = 4096
 overlap = 100
 
 

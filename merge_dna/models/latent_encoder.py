@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from .positional_encoding import PositionalEncoding
+from .token_merge import TokenMerge
+from .token_unmerge import TokenUnmerge
 
 class LatentEncoder(nn.Module):
     """
@@ -36,6 +37,8 @@ class LatentEncoder(nn.Module):
         super().__init__()
         self.input_dim = input_dim
         self.d_model = d_model
+        self.token_merge = TokenMerge(r=0, protect_cls=True)
+        self.token_unmerge = TokenUnmerge()
 
         if input_dim != d_model:
             self.input_proj = nn.Linear(input_dim, d_model)
@@ -62,12 +65,24 @@ class LatentEncoder(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, x: torch.Tensor, src_mask=None, src_key_padding_mask=None):
+
+    def forward(self, x: torch.Tensor, src_mask=None, src_key_padding_mask=None, token_merge=False):
         """
-        x: (B, S, input_dim)
-        returns memory: (B, S, d_model)
+        x: (B, L, input_dim)
+        returns memory: (B, L, d_model)
         """
-        x = self.input_proj(x)               # (B, S, d_model)
-        x = self.pos_enc(x)                  # (S, B, d_model)
-        memory = self.transformer_encoder.forward(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
-        return memory
+        x = self.input_proj(x)               # (B, L, d_model)
+        x = self.pos_enc(x)                  # (L, B, d_model)
+        
+        if token_merge:
+            L = x.shape[1]
+            desired_r = L // 2
+            self.token_merge.r = int(desired_r)
+            merged, prev_to_new, _ = self.token_merge(x, x)
+            merged = self.pos_enc(merged)
+        
+            latent = self.transformer_encoder.forward(merged, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+            latent = self.token_unmerge.forward(latent, prev_to_new)
+        else:
+            latent = self.transformer_encoder.forward(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+        return latent
