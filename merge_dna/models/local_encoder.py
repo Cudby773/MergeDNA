@@ -90,7 +90,7 @@ class LocalBlock(nn.Module):
         num_windows = L_trunc // W
 
         # 1) local attention per window
-        x_attn_unfolded, x_windows_attn, num_windows = self.attn.forward(x)  # (B, L_trunc, D)
+        _, x_windows_attn, num_windows = self.attn.forward(x)  # (B, L_trunc, D)
 
         # 2) call TokenMerge in batch: it must accept shape (B*num_windows, W, D) and return merged and source_index (local)
         merged_windows, source_index_windows = self.token_merge.forward(x_windows_attn, x_windows_attn)
@@ -177,6 +177,7 @@ class LocalEncoder(nn.Module):
         token_merge_factory: callable r -> TokenMerge instance constructor or a module to be cloned per layer
         """
         super().__init__()
+        self.d_model = d_model
         self.emb = nn.Embedding(vocab_size, d_model) 
         self.layers = nn.ModuleList()
         for cfg in layer_configs:

@@ -1,7 +1,6 @@
 import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 5000):
@@ -22,13 +21,19 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         # x: (seq_len, batch, d_model) or (batch, seq_len, d_model)
         pe: torch.Tensor = self.pe
+        if pe.device != x.device or pe.dtype != x.dtype:
+            pe = pe.to(device=x.device, dtype=x.dtype)
+            
         if x.dim() == 3 and x.shape[0] == pe.shape[1]:
-            # (seq, batch, d)
+            # (seq_len, batch, d)
             x = x + pe.squeeze(0).transpose(0, 1)[: x.size(0), :].unsqueeze(1)
             return x
         if x.dim() == 3 and x.shape[1] == pe.shape[1]:
-            # (batch, seq, d)
+            # (batch, seq_len, d)
             return x + pe[:, : x.size(1), :]
-        # more common path below for (seq, batch, d)
-        seq_len = x.shape[0]
-        return x + pe[:, :seq_len, :].transpose(0, 1)
+        else:
+            # x is (seq_len, batch, d) with seq_len < max_len
+            S, _, _ = x.shape
+            if S > pe.shape[1]:
+                raise ValueError(f"Requested len={S} exceeds max_len={pe.shape[1]}")
+            return x + pe[:, :S, :].transpose(0, 1)

@@ -1,4 +1,3 @@
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -51,7 +50,7 @@ class LatentEncoder(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             activation=activation,
-            batch_first=False,
+            batch_first=True,
             norm_first=norm_first,
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
@@ -69,8 +68,6 @@ class LatentEncoder(nn.Module):
         returns memory: (B, S, d_model)
         """
         x = self.input_proj(x)               # (B, S, d_model)
-        x = x.transpose(0, 1)                # (S, B, d_model) for PyTorch transformer
         x = self.pos_enc(x)                  # (S, B, d_model)
         memory = self.transformer_encoder.forward(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
-        memory = memory.transpose(0, 1)      # (B, S, d_model)
         return memory

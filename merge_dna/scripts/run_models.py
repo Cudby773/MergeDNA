@@ -13,19 +13,21 @@ def main(device: str):
     device = torch.device(device)
     # hyperparams
     vocab_size = 4
-    d_model = 32
+    embed_dim = 32
+    latent_d_model = 64
 
     # instantiate modules
     local_enc = LocalEncoder(
         vocab_size, 
-        d_model, 
+        d_model=embed_dim, 
         nhead=4, 
         layer_configs=[{'window_size': 30, 'r':3}]*2, 
         token_merge_factory=lambda r: TokenMerge(r)
     ).to(device)
-    latent_enc = LatentEncoder(d_model).to(device)
-    latent_dec = LatentDecoder(d_model).to(device)
-    local_dec = LocalDecoder(d_model, vocab_size).to(device)
+
+    latent_enc = LatentEncoder(d_model=latent_d_model, input_dim=embed_dim).to(device)
+    latent_dec = LatentDecoder(d_model=latent_d_model, input_dim=latent_enc.d_model, output_dim=embed_dim).to(device)
+    local_dec = LocalDecoder(d_model=embed_dim, vocab_size=vocab_size).to(device)
     merge_dna_model = MergeDNAModel(local_enc, latent_enc, latent_dec, local_dec)
 
     # toy optimizer
@@ -50,9 +52,9 @@ def main(device: str):
                 pass
             
         # forward
-        merged, source_index = local_enc.forward(x)         # (B, M, D)
-        latent = latent_enc.forward(merged)                 # (B, M, D)
-        decoded_latent = latent_dec.forward(latent)         # (B, M, D)
+        merged, source_index = local_enc.forward(x)         # (B, S, D)
+        latent = latent_enc.forward(merged)                 # (B, S, input_dim) -> (B, S, d_model)
+        decoded_latent = latent_dec.forward(latent)         # (B, S, d_model) -> (B, S, output_dim)
         logits = local_dec.forward(decoded_latent, source_index)  # (B, L_trunc, V)
 
         # loss: cross-entropy over flattened positions

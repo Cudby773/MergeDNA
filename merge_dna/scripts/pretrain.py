@@ -9,16 +9,17 @@ from merge_dna.training.trainer import Trainer
 from merge_dna.data import make_multi_species_genome_data_loader
 
 
-def make_model_small(vocab_size=6, d_model=64, nhead=4):
+def make_model_small(vocab_size=6, embed_dim = 32, latent_d_model=64, nhead=4):
     layer_configs = [{"window_size": 8, "r": 2}, {"window_size": 8, "r": 2}]
     def tm_factory(r):
         return TokenMerge(r=r)
-    local_enc = LocalEncoder(vocab_size=vocab_size, d_model=d_model, nhead=nhead, layer_configs=layer_configs, token_merge_factory=tm_factory)
-    latent_enc = LatentEncoder(d_model=d_model, nhead=nhead, num_layers=8)
-    latent_dec = LatentDecoder(d_model=d_model, num_layers=4)
-    local_dec = LocalDecoder(d_model=d_model, vocab_size=vocab_size)
+    local_enc = LocalEncoder(vocab_size=vocab_size, d_model=embed_dim, nhead=nhead, layer_configs=layer_configs, token_merge_factory=tm_factory)
+    latent_enc = LatentEncoder(d_model=latent_d_model, input_dim=embed_dim, nhead=nhead, num_layers=2)
+    latent_dec = LatentDecoder(d_model=latent_d_model, input_dim=latent_enc.d_model, output_dim=embed_dim, num_layers=1)
+    local_dec = LocalDecoder(d_model=embed_dim, vocab_size=vocab_size)
     model = MergeDNAModel(local_enc, latent_enc, latent_dec, local_dec)
     return model
+
 
 def parse_args():
     p = argparse.ArgumentParser()

@@ -12,9 +12,15 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-# ---------------------------
-# Utility functions
-# ---------------------------
+DNA_MAP = {"A": 0, "C": 1, "G": 2, "T": 3, "N": 4}
+PAD_ID = 5
+VOCAB_SIZE = 6
+
+
+def seq_to_ids(seq: str):
+    return [DNA_MAP.get(ch, DNA_MAP["N"]) for ch in seq]
+
+
 def filter_fn(char: str) -> str:
     """Normalize non-ACGT -> N"""
     return char if char in {"A", "C", "G", "T"} else "N"
@@ -39,9 +45,6 @@ def open_fasta(path: Path):
         return open(path, "rt", encoding="utf-8", errors="replace")
 
 
-# ---------------------------
-# Generator of sequence windows
-# ---------------------------
 def _generate_examples(files: Iterable[Path], chunk_length: int, overlap: int) -> Iterator[Tuple[int, dict]]:
     """
     Iterate over a list of Path objects, stream FASTA records, and yield windows.
@@ -102,17 +105,6 @@ def _generate_examples(files: Iterable[Path], chunk_length: int, overlap: int) -
     logger.info("_generate_examples: finished streaming files")
 
 
-# ---------------------------
-# Token mapping & collate
-# ---------------------------
-DNA_MAP = {"A": 0, "C": 1, "G": 2, "T": 3, "N": 4}
-PAD_ID = 5
-VOCAB_SIZE = 6
-
-
-def seq_to_ids(seq: str):
-    return [DNA_MAP.get(ch, DNA_MAP["N"]) for ch in seq]
-
 
 def collate_genomic(batch: list, pad_id: int = PAD_ID):
     """
@@ -130,8 +122,8 @@ def collate_genomic(batch: list, pad_id: int = PAD_ID):
     batch_ids = torch.full((len(id_lists), L), fill_value=pad_id, dtype=torch.long)
     attention = torch.zeros((len(id_lists), L), dtype=torch.long)
     for i, arr in enumerate(id_lists):
-        batch_ids[i, : len(arr)] = torch.tensor(arr, dtype=torch.long)
-        attention[i, : len(arr)] = 1
+        batch_ids[i, :len(arr)] = torch.tensor(arr, dtype=torch.long)
+        attention[i, :len(arr)] = 1
 
     labels = batch_ids.clone()
     meta = []
@@ -153,9 +145,6 @@ def collate_genomic(batch: list, pad_id: int = PAD_ID):
     }
 
 
-# ---------------------------
-# IterableDataset that shards files per worker
-# ---------------------------
 class ShardedGenomicDataset(IterableDataset):
     def __init__(self, all_files: List[Path], generator_factory: Callable, chunk_length: int = 6000, overlap: int = 100, infinite: bool = False):
         super().__init__()
@@ -193,9 +182,6 @@ class ShardedGenomicDataset(IterableDataset):
                 gen = self.generator_factory(files_shard, chunk_length=self.chunk_length, overlap=self.overlap)
 
 
-# ---------------------------
-# Factory helper
-# ---------------------------
 def make_generator_factory(base_generator_fn: Callable):
     """
     base_generator_fn(files_subset, chunk_length, overlap) -> generator
@@ -206,9 +192,6 @@ def make_generator_factory(base_generator_fn: Callable):
     return factory
 
 
-# ---------------------------
-# Helper to build file list & DataLoader
-# ---------------------------
 HERE = Path(__file__).resolve()
 GENOMES_DIR = HERE.parent / "genomes"
 if not GENOMES_DIR.exists():
@@ -235,9 +218,6 @@ def make_data_loader(batch_size: int, infinite: bool = False, num_workers: int =
     return loader
 
 
-# ---------------------------
-# Small smoke test helper
-# ---------------------------
 def smoke_test_loader(n_epochs: int = 3, batches_per_epoch: int = 4, batch_size: int = 2):
     print("Running smoke test: n_epochs", n_epochs, "batches_per_epoch", batches_per_epoch, "batch_size", batch_size)
     loader = make_data_loader(batch_size=batch_size, infinite=True, num_workers=0)
@@ -254,6 +234,6 @@ def smoke_test_loader(n_epochs: int = 3, batches_per_epoch: int = 4, batch_size:
     print("smoke test done")
 
 
-# Allow running smoke test when executed directly
+# Run smoke test when executed directly
 if __name__ == "__main__":
     smoke_test_loader()
