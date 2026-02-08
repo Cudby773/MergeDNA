@@ -40,97 +40,90 @@ class TokenMerge(nn.Module):
             self._pos_b = pos_b
 
 
-    def forward(self, x: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
-            x: (B, T, C) input features
-            k: (B, T, C) keys/scores for matching
+            x: (B, T_prev, C) input features (the sequence passed to this TokenMerge)
+            k: (B, T_prev, C) keys used for matching (may be same as x or projected)
         Returns:
             merged: (B, M_new, C)
-            source_index: (B, T_trunc) long tensor mapping each original position to new merged index
+            prev_to_new: (B, T_prev) long mapping from indices in this layer's input -> new merged idx (or -1)
+            source_index: (B, T_prev_orig) optional mapping from original base positions -> new merged indices (if you still compute it here)
+            merge_scores: (B, M_new) float scores per merged token (norm or learned)
         """
-        B, T, C = x.shape
+        B, T_prev, C = x.shape
         device = x.device
-
-        self._ensure_buffers(T, device)
-        pos_a = self._pos_a            # (Ta,)
-        pos_b = self._pos_b            # (Tb,)
+        
+        self._ensure_buffers(T_prev, device)
+        pos_a = self._pos_a  
+        pos_b = self._pos_b 
         Tb = pos_b.shape[0]
-        # assert Ta == Tb, "This implementation assumes Ta == Tb (even T)."
 
-        # split into a and b sequences (interleaved)
+        # split into a and b
         a = k[:, ::2, :]   # (B, Ta, C)
         b = k[:, 1::2, :]  # (B, Tb, C)
 
-        # normalize keys for cosine similarity (stabilize)
-        a = a / (a.norm(dim=-1, keepdim=True) + 1e-12)
-        b = b / (b.norm(dim=-1, keepdim=True) + 1e-12)
-
-        # similarity (B, Ta, Tb)
-        scores = a @ b.transpose(-1, -2)
+        a_norm = a / (a.norm(dim=-1, keepdim=True) + 1e-12)
+        b_norm = b / (b.norm(dim=-1, keepdim=True) + 1e-12)
+        sim = a_norm @ b_norm.transpose(-1, -2)
 
         if self.protect_cls:
-            # prevent merging the first a token (common in CLS-style setups)
-            # set its row to -inf so it never gets top-k selected
-            scores[:, 0, :] = -math.inf
+            sim[:, 0, :] = -math.inf
 
-        # best matching b index for each a (B, Ta)
-        node_max, node_idx = scores.max(dim=-1)
-
-        # order 'a' tokens by descending match score and pick top-r as src
+        node_max, node_idx = sim.max(dim=-1)  # (B, Ta)  , node_idx indexes into 0..Tb-1
         edge_order = node_max.argsort(dim=-1, descending=True)  # (B, Ta)
-        src_idx = edge_order[:, :self.r]       # (B, r) indices into a
-        unm_idx = edge_order[:, self.r:]       # (B, Ta-r) indices into a (unsorted)
-        # sort unm_idx so the kept a tokens appear in increasing order
-        unm_sorted, _ = unm_idx.sort(dim=-1)    # (B, Ta-r)
+        src_idx = edge_order[:, : self.r]    # (B, r) indices into a (positions in a segment)
+        unm_idx = edge_order[:, self.r:]    # (B, Ta-r)
+        unm_sorted, _ = unm_idx.sort(dim=-1)  # (B, Ta-r)
 
-        # corresponding dst indices for selected srcs (indices into b)
-        dst_idx = node_idx.gather(dim=-1, index=src_idx)  # (B, r)
-
-        src_pos = pos_a[src_idx]          # (B, r)
-        unm_pos = pos_a[unm_sorted]       # (B, Ta-r)
-
-        # store unm_sorted as a buffer (per-batch) for inspection/debugging.
-        self._unm_idx = unm_sorted
-
-        # now form the actual merged features from x
-        src = x[:, ::2, :]   # (B, Ta, C)
+        src = x[:, ::2, :]  # (B, Ta, C)
         dst = x[:, 1::2, :]  # (B, Tb, C)
 
-        # gather kept 'a' features
-        unm = torch.gather(src, dim=1, index=unm_sorted.unsqueeze(-1).expand(-1, -1, C))  # (B, Ta-r, C)
+        src_sel = torch.gather(src, dim=1, index=src_idx.unsqueeze(-1).expand(-1, -1, C))
+        unm = torch.gather(src, dim=1, index=unm_sorted.unsqueeze(-1).expand(-1, -1, C))
 
-        # gather src features to merge
-        src_sel = torch.gather(src, dim=1, index=src_idx.unsqueeze(-1).expand(-1, -1, C))  # (B, r, C)
-
-        # scatter-add src_sel into dst at positions dst_idx
         dst_updated = dst.clone()
-        dst_updated = dst_updated.scatter_add(1, dst_idx.unsqueeze(-1).expand(-1, -1, C), src_sel)  # (B, Tb, C)
+        dst_idx = node_idx.gather(dim=1, index=src_idx)  # (B, r) - indices into dst (0..Tb-1)
+        dst_updated = dst_updated.scatter_add(1, dst_idx.unsqueeze(-1).expand(-1, -1, C), src_sel)
 
-        # new merged sequence: [kept a tokens] ++ [all b tokens]
-        merged = torch.cat([unm, dst_updated], dim=1)  # (B, (Ta-r)+Tb, C)
+        merged = torch.cat([unm, dst_updated], dim=1)  # (B, M_new, C) where M_new = (Ta - r) + Tb
 
-        # Build source_index: map each original absolute position j in [0..T-1] to merged index m in [0..M_new-1]
-        source_index = torch.full((B, T), -1, dtype=torch.long, device=device)
+        prev_to_new = torch.full((B, T_prev), -1, dtype=torch.long, device=device)
 
-        # indexes for kept 'a' tokens: new indices 0..(Ta-r-1)
-        a_new_indices = torch.arange(unm.shape[1], device=device).unsqueeze(0).expand(B, -1)  # (B, Ta-r)
-        # place into source_index at absolute positions unm_pos
-        source_index.scatter_(dim=1, index=unm_pos, src=a_new_indices)
+        if unm_sorted.numel() > 0:
+            if pos_a.dim() == 1:
+                pos_a_expand = pos_a.unsqueeze(0).expand(B, -1)  # (B, Ta)
+            else:
+                pos_a_expand = pos_a  # (B, Ta)
+            unm_prev_pos = torch.gather(pos_a_expand, 1, unm_sorted)  # (B, n_unm) absolute prev positions
+            n_unm = unm_sorted.shape[1]
+            new_unm_idx = torch.arange(n_unm, dtype=torch.long, device=device).unsqueeze(0).expand(B, -1)
+            prev_to_new.scatter_(1, unm_prev_pos, new_unm_idx)
 
-        # indexes for b tokens: base offset + 0..Tb-1
-        base_b = unm.shape[1]
-        b_new_indices = base_b + torch.arange(Tb, device=device).unsqueeze(0).expand(B, -1)  # (B, Tb)
-        source_index.scatter_(dim=1, index=pos_b.unsqueeze(0).expand(B, -1), src=b_new_indices)
+        n_unm = unm_sorted.shape[1] if unm_sorted.numel() > 0 else 0
+        if pos_b is not None and pos_b.numel() > 0:
+            if pos_b.dim() == 1:
+                pos_b_expand = pos_b.unsqueeze(0).expand(B, -1)  # (B, Tb)
+            else:
+                pos_b_expand = pos_b
+            b_new_indices = (torch.arange(Tb, dtype=torch.long, device=device).unsqueeze(0) + n_unm).expand(B, -1)
+            prev_to_new.scatter_(1, pos_b_expand.long().to(device), b_new_indices)
 
-        # src tokens (merged a tokens) map to the new index of their destination b token:
-        src_to_new = base_b + dst_idx  # (B, r)
-        source_index.scatter_(dim=1, index=src_pos, src=src_to_new)
+        if src_idx.numel() > 0:
+            # src_idx are indices into a (0..Ta-1) -> map to prev positions via pos_a_expand
+            if pos_a.dim() == 1:
+                pos_a_expand = pos_a.unsqueeze(0).expand(B, -1)
+            else:
+                pos_a_expand = pos_a
+            src_prev_pos = torch.gather(pos_a_expand, 1, src_idx)  # (B, r) absolute prev positions
+            dst_new = (dst_idx + n_unm).long()
+            prev_to_new.scatter_(1, src_prev_pos.long().to(device), dst_new.long().to(device))
 
-        # sanity check: no -1 left (all positions assigned)
-        if (source_index < 0).any():
-            raise RuntimeError("Some original positions were not assigned an owner index. Check matching shapes.")
 
-        return merged, source_index
+        # --- compute merge_scores for AMTM (simple L2-norm of merged features) ---
+        merge_scores = merged.norm(dim=-1)  # (B, M_new)
+        self.last_scores = merge_scores.detach()
+
+        return merged, prev_to_new, merge_scores
 
     

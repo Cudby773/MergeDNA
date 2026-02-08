@@ -3,11 +3,19 @@ import torch.nn.functional as F
 from torch import nn
 from typing import Optional, Dict, Any, Tuple
 from merge_dna.models import (
-    LocalEncoder, LatentEncoder, LatentDecoder, LocalDecoder, MergeDNAModel
+    LocalEncoder, MergeDNAModel
 )
+from pathlib import Path
 
-# Use the model class from your repo (assumed to be constructed elsewhere)
-# from merge_dna.models import MergeDNAModel  # your script constructs model and passes it in
+
+def load_checkpoint(path: str, model, optimizer=None, device="cpu"):
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt["model"])
+    if optimizer is not None:
+        optimizer.load_state_dict(ckpt["optimizer"])
+    step = ckpt.get("step", 0)
+    epoch = ckpt.get("epoch", 0)
+    return step, epoch, ckpt.get("config", {})
 
 
 def ensure_mask_token_in_embedding(local_encoder: LocalEncoder, mask_token_id: int):
@@ -63,23 +71,47 @@ def sample_topk_from_scores(scores: torch.Tensor, K: int, deterministic: bool = 
 
 
 def mask_base_positions_from_merged_selection(
-    x: torch.LongTensor, 
+    x: torch.LongTensor,
     final_source_map: torch.LongTensor,
-    merged_mask: torch.Tensor, 
+    merged_mask: torch.BoolTensor,
     mask_token_id: int
-) -> Tuple[torch.Tensor, torch.Tensor]:
+):
     """
-    Map merged_mask (B, M) to base-level boolean mask (B, L) using final_source_map (B, L) which maps base pos -> merged idx.
-    Then return x_masked where base positions that are True are set to mask_token_id.
-    Returns (x_masked, base_mask_bool)
+    Robust mapping: if final_source_map shorter than x, only mask positions that have a mapping.
+    Also supports final_source_map containing -1 for unmapped positions.
+    Returns x_masked (B, L_x) and base_mask (B, L_x) boolean.
     """
-    # final_source_map: (B, L) with values 0..M-1
-    merged_mask_int = merged_mask.long()  # (B, M)
-    base_mask_int = torch.gather(merged_mask_int, dim=1, index=final_source_map)  # (B, L) 0/1
-    base_mask = base_mask_int.bool()
+    B, L_x = x.shape
+    Bm, L_map = final_source_map.shape
+    assert B == Bm, f"batch size mismatch between x {B} and final_source_map {Bm}"
+
+    # merged_mask: (B, M)
+    if merged_mask.ndim != 2:
+        raise ValueError(f"merged_mask must be 2D (B, M) but got {merged_mask.shape}")
+
+    # If final_source_map may contain -1 for unmapped positions, clamp/gather safely:
+    # Build base_mask of shape (B, L_x) initialized False
+    base_mask = torch.zeros((B, L_x), dtype=torch.bool, device=x.device)
+
+    # We'll only fill the prefix that final_source_map covers
+    L_common = min(L_x, L_map)
+    if L_common == 0:
+        return x.clone(), base_mask
+
+    # Use gather, but ensure indices are valid: clamp negative indices to 0, and then mask them out later
+    gather_idx = final_source_map[:, :L_common].clamp(min=0)   # (B, L_common)
+    merged_mask_int = merged_mask.long()                       # (B, M)
+    gathered = torch.gather(merged_mask_int, dim=1, index=gather_idx)  # (B, L_common)
+
+    # Where final_source_map had -1, we should set gathered to 0
+    invalid_pos = final_source_map[:, :L_common] < 0
+    gathered[invalid_pos] = 0
+
+    base_mask[:, :L_common] = gathered.bool()
     x_masked = x.clone()
     x_masked[base_mask] = mask_token_id
     return x_masked, base_mask
+
 
 
 class Trainer:
@@ -92,7 +124,9 @@ class Trainer:
         mask_token_id: Optional[int] = None,
         K_for_AMTM: int = 8,
         lambda_latent: float = 0.25,
-        deterministic_selection: bool = False
+        deterministic_selection: bool = False,
+        checkpoint_dir: str = "checkpoints",
+        checkpoint_every: int = 100,
     ):
         """
         model: a wrapper MergeDNAModel that exposes .local_encoder, .latent_encoder, .latent_decoder, .local_decoder
@@ -126,6 +160,37 @@ class Trainer:
 
         # loss function for CE (we will handle masked averaging manually for AMTM)
         self.loss_fn = nn.CrossEntropyLoss(reduction="none")  # per-position losses
+        
+        
+        self.checkpoint_every = checkpoint_every
+        self.global_step = 0
+
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+        
+    def save_checkpoint(self, epoch: int):
+        ckpt = {
+            "model": self.model.state_dict(),
+            "optimizer": self.opt.state_dict(),
+            "step": self.global_step,
+            "epoch": epoch,
+            "config": {
+                "K_for_AMTM": self.K,
+                "lambda_latent": self.lambda_latent,
+                "deterministic_selection": self.deterministic_selection,
+                "mask_token_id": self.mask_token_id,
+            },
+        }
+
+        path = self.checkpoint_dir / f"step_{self.global_step:07d}.pt"
+        tmp_path = path.with_suffix(".pt.tmp")
+
+        # write atomically
+        torch.save(ckpt, tmp_path)
+        tmp_path.replace(path)
+
+        print(f"[checkpoint] saved to {path}")
 
 
     def compute_losses(self, x: torch.LongTensor) -> Tuple[torch.Tensor, Dict[str, float]]:
@@ -142,11 +207,11 @@ class Trainer:
         # ---------------------------
         # 1) Full MTR (end-to-end)
         # ---------------------------
-        merged, source_maps = model.local_encoder(x)  # merged: (B, M, D) ; source_maps: list -> last is final map (B, L)
+        merged, source_maps, merge_scores_list = model.local_encoder.forward(x)  # merged: (B, M, D) ; source_maps: list -> last is final map (B, L)
         final_source_map = source_maps[-1]  # mapping base pos -> merged idx
-        latent = model.latent_encoder(merged)                 # (B, M, d_model)
-        decoded_latent = model.latent_decoder(latent)        # (B, M, out_dim) usually out_dim==embed_dim
-        logits = model.local_decoder(decoded_latent, source_maps)  # (B, L, V)
+        latent = model.latent_encoder.forward(merged)                 # (B, M, d_model)
+        decoded_latent = model.latent_decoder.forward(latent)        # (B, M, out_dim) usually out_dim==embed_dim
+        logits = model.local_decoder.forward(decoded_latent, source_maps)  # (B, L, V)
 
         # CE over all base positions (flatten)
         logits_flat = logits.view(-1, logits.size(-1))  # (B*L, V)
@@ -169,23 +234,8 @@ class Trainer:
         # ---------------------------
         # 3) AMTM (Adaptive Masked Token Modeling)
         # ---------------------------
-        # Need per-merged-token importance scores. If TokenMerge provides them, use them.
-        # Otherwise fallback to L2-norm of merged embeddings as proxy.
-        # Check for typical attr (depends on your TokenMerge impl). We'll fall back to norm.
-        try:
-            # example: token_merge may expose last_scores on the last layer - adapt if your code differs
-            last_layer = getattr(model.local_enc, "layers")[-1]
-            # try a few plausible places
-            if hasattr(last_layer.token_merge, "last_scores"):
-                merge_scores = last_layer.token_merge.last_scores.detach()  # (B, M)
-            elif hasattr(last_layer.token_merge, "scores"):
-                merge_scores = last_layer.token_merge.scores.detach()
-            else:
-                raise AttributeError()
-        except Exception:
-            merge_scores = merged.detach().norm(dim=-1)  # (B, M) fallback
-
         # sample / select top-K merged tokens per sample
+        merge_scores = merge_scores_list[-1]
         merged_mask = sample_topk_from_scores(merge_scores, K=self.K, deterministic=self.deterministic_selection)  # (B, M) bool
 
         # map merged selection -> base level masked positions
@@ -196,10 +246,10 @@ class Trainer:
             mask_token_id=self.mask_token_id
         )
         # forward masked input
-        merged_masked, source_maps_masked = model.local_encoder(x_masked)  # same pipeline, model trains on this pass too
-        latent_masked = model.latent_encoder(merged_masked)
-        decoded_masked = model.latent_decoder(latent_masked)
-        logits_masked = model.local_decoder(decoded_masked, source_maps_masked)  # (B, L, V)
+        merged_masked, source_maps_masked, _ = model.local_encoder.forward(x_masked)  # same pipeline, model trains on this pass too
+        latent_masked = model.latent_encoder.forward(merged_masked)
+        decoded_masked = model.latent_decoder.forward(latent_masked)
+        logits_masked = model.local_decoder.forward(decoded_masked, source_maps_masked)  # (B, L, V)
 
         # compute AMTM loss: negative log-likelihood over masked base positions
         logp = F.log_softmax(logits_masked, dim=-1)  # (B, L, V)
@@ -224,7 +274,7 @@ class Trainer:
         return total_loss, metrics
 
 
-    def train_step(self, batch: torch.LongTensor) -> Dict[str, Any]:
+    def train_step(self, batch: torch.LongTensor, epoch: int) -> Dict[str, Any]:
         """
         One optimization step given a batch of base tokens shape (B, L)
         """
@@ -233,6 +283,11 @@ class Trainer:
         total_loss, metrics = self.compute_losses(batch)
         total_loss.backward()
         self.opt.step()
+        
+        self.global_step += 1
+        if self.global_step % self.checkpoint_every == 0:
+            self.save_checkpoint(epoch)
+            
         return metrics
 
 
@@ -246,7 +301,7 @@ class Trainer:
             if max_batches is not None and i >= max_batches:
                 break
             # expect batch shape (B, L)
-            metrics = self.train_step(batch)
+            metrics = self.train_step(batch, epoch)
             for k in running:
                 if k in metrics:
                     running[k] += metrics[k]

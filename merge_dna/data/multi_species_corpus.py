@@ -109,9 +109,9 @@ def _generate_examples(files: Iterable[Path], chunk_length: int, overlap: int) -
 def collate_genomic(batch: list, pad_id: int = PAD_ID):
     """
     Collate a batch from the generator: batch is list of (key, example_dict)
-    Returns tensors: input_ids, attention_mask, labels, meta, keys
+    Returns tensor: batch_ids
     """
-    keys, examples = zip(*batch)
+    _, examples = zip(*batch)
     seqs = [ex["sequence"] for ex in examples]
     id_lists = [seq_to_ids(s) for s in seqs]
     lengths = [len(x) for x in id_lists]
@@ -120,29 +120,10 @@ def collate_genomic(batch: list, pad_id: int = PAD_ID):
     L = max(lengths)
 
     batch_ids = torch.full((len(id_lists), L), fill_value=pad_id, dtype=torch.long)
-    attention = torch.zeros((len(id_lists), L), dtype=torch.long)
     for i, arr in enumerate(id_lists):
         batch_ids[i, :len(arr)] = torch.tensor(arr, dtype=torch.long)
-        attention[i, :len(arr)] = 1
 
-    labels = batch_ids.clone()
-    meta = []
-    for ex in examples:
-        meta.append({
-            "file": ex.get("file"),
-            "record_id": ex.get("record_id"),
-            "description": ex.get("description"),
-            "start_pos": ex.get("start_pos"),
-            "end_pos": ex.get("end_pos"),
-        })
-
-    return {
-        "input_ids": batch_ids,
-        "attention_mask": attention,
-        "labels": labels,
-        "meta": meta,
-        "keys": keys,
-    }
+    return batch_ids
 
 
 class ShardedGenomicDataset(IterableDataset):

@@ -28,38 +28,22 @@ class LocalMergeBlock(nn.Module):
         self.M_w = window_size - r
         
         
-    def build_source_index(self, source_index_windows: torch.Tensor, B: int, W: int, num_windows: int, L_trunc: int, device):
-        # source_index_windows currently maps window-local pos -> merged index within that window.
-        # We must convert window-local indices to global merged indices in concatenated merged sequence.
-        # For window w, global_offset = w * M_w. We add those offsets and then place owner indices into the global owner map.
-
-        source_index_windows = source_index_windows.view(B, num_windows, W)  # (B, num_windows, W)
-        # offsets per window with shape (1, num_windows, 1)
+    def build_source_index(self, prev_to_new_windows: torch.Tensor, B: int, W: int, num_windows: int, L_orig: int, device):
+        prev_to_new_windows = prev_to_new_windows.view(B, num_windows, W)  # (B, num_windows, W)
         offsets_per_window = (torch.arange(num_windows, device=device, dtype=torch.long) * self.M_w).view(1, num_windows, 1)
-        source_index_global_windows = source_index_windows + offsets_per_window  # (B, num_windows, W)
+        source_index_global_windows = prev_to_new_windows + offsets_per_window  # (B, num_windows, W)
         
-        # Now we need to map each original absolute position to its merged index.
-        # compute absolute original positions for each window-local position
-        # For window w, local positions 0..W-1 correspond to absolute positions base = w*W + local_pos
-        # Compute a tensor abs_pos_windows of shape (num_windows, W)
         abs_pos = (torch.arange(W, device=device).unsqueeze(0) + (torch.arange(num_windows, device=device).unsqueeze(1) * W))  # (num_windows, W)
-        # expand to (B, num_windows, W)
         abs_pos = abs_pos.unsqueeze(0).expand(B, -1, -1)
-
-        # Now flatten to (B, num_windows * W) in the same order windows were folded
         source_index_per_position = source_index_global_windows.reshape(B, num_windows * W)  # merged index per position
         abs_pos_flat = abs_pos.reshape(B, num_windows * W)  # absolute positions in padded sequence
-
-        # abs_pos_flat[b,p] is the absolute location (0..L_trunc-1) corresponding to position p in the folded order.
-        # But abs_pos_flat is exactly [0..L_trunc-1] broadcast per batch; we can invert the mapping
-        # Build source_index_by_absolute_position of shape (B, L_trunc), init -1
-        source_index_by_abs = torch.full((B, L_trunc), -1, dtype=torch.long, device=device)
+        source_index_by_abs = torch.full((B, L_orig), -1, dtype=torch.long, device=device)
         # scatter owner indices into source_index_by_abs at positions abs_pos_flat using source_index_per_position as src
         source_index_by_abs.scatter_(dim=1, index=abs_pos_flat, src=source_index_per_position)        
         return source_index_by_abs
 
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # x: (B, L, D) token indices
         B, L, D = x.shape
         W = self.window_size
@@ -73,45 +57,24 @@ class LocalMergeBlock(nn.Module):
 
         _, x_windows_attn, num_windows = self.attn.forward(x)  # (B, L_trunc, D)
 
-        merged_windows, source_index_windows = self.token_merge.forward(x_windows_attn, x_windows_attn)
+        merged_windows, prev_to_new_windows, merge_scores_windows = self.token_merge.forward(x_windows_attn, x_windows_attn)
         # merged_windows: (B * num_windows, M_w, D)
-        # source_index_windows: (B * num_windows, W) long, mapping local window pos -> merged index (0..M_w-1)
-
-
-        # Defensive asserts to catch shape mismatch:
-        expected_folded_batch = B * num_windows
-        if merged_windows.dim() != 3:
-            raise RuntimeError(f"token_merge returned tensor with dim {merged_windows.dim()}, expected 3 (batch, M_w, D).")
-        if source_index_windows.dim() != 2:
-            raise RuntimeError(f"token_merge returned source_index with dim {source_index_windows.dim()}, expected 2 (batch, W).")
-
-        # merged_windows should have batch == expected_folded_batch
-        if merged_windows.shape[0] != expected_folded_batch:
-            raise RuntimeError(
-                f"token_merge returned batch {merged_windows.shape[0]} but expected {expected_folded_batch} "
-                f"(B * num_windows). This means token_merge is not processing folded windows correctly."
-            )
-        # check second dim equals M_w
-        if merged_windows.shape[1] != self.M_w:
-            raise RuntimeError(
-                f"token_merge returned merged length {merged_windows.shape[1]} but expected M_w={self.M_w}. "
-                "Check TokenMerge configuration (r vs window_size)."
-            )
-        # check vector dim
-        if merged_windows.shape[2] != D:
-            raise RuntimeError(f"token_merge returned D={merged_windows.shape[2]} but expected D={D}.")
-
-
+        # prev_to_new_windows: (B * num_windows, W) long, mapping local window pos -> merged index (0..M_w-1)
+        # merge_scores: (B*num_windows, D)        
+        
         merged = merged_windows.view(B, num_windows * self.M_w, D)
-        source_index_by_abs = self.build_source_index(source_index_windows, B, W, num_windows, L_trunc, device)
+        merge_scores = merge_scores_windows.view(B, num_windows * self.M_w)
+        source_index_by_abs = self.build_source_index(prev_to_new_windows, B, W, num_windows, L_trunc, device)
+
 
         # Finally, trim padding if any
         if pad_len > 0:
             source_index_by_abs = source_index_by_abs[:, :L]   # L is original length before padding
             valid_windows = (L + W - 1) // W
-            merged = merged[:, : valid_windows * self.M_w, :]
+            merged = merged[:, :valid_windows * self.M_w, :]
+            merge_scores = merge_scores[:, :valid_windows * self.M_w]
 
-        return merged, source_index_by_abs
+        return merged, source_index_by_abs, merge_scores
 
 
 class LocalEncoder(nn.Module):
@@ -142,13 +105,18 @@ class LocalEncoder(nn.Module):
         """
         x: (B, L, D)
         Returns:
-          x: compressed representation after last local layer
-          source_index_list: list of source_index maps per layer (if you want to keep them), else only last
+            x: compressed representation after last local layer
+            source_maps: list of source_index maps per layer
+            merge_scores_list: per layer scores
         """
         x = self.emb(x)
         source_maps = []
+        merge_scores_list = []
+        B, T_orig, _ = x.shape
         for layer in self.layers:
-            merged, source_index = layer(x)
+            # each layer.forward now returns (merged, source_index_by_abs, merge_scores)
+            merged, source_index, merge_scores = layer(x)
             source_maps.append(source_index)
+            merge_scores_list.append(merge_scores)  # (B, M_layer)
             x = merged  # next layer runs on compressed sequence
-        return x, source_maps
+        return x, source_maps, merge_scores_list

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .local_attention import LocalAttention
-from .unmerge import Unmerge
+from .token_unmerge import Unmerge
 
 
 class LocalUnmergeBlock(nn.Module):

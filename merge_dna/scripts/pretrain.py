@@ -37,14 +37,15 @@ def main():
     print("device:", device)
     torch.manual_seed(seed)
     model = make_model_small().to(device)
-    opt, sched = make_optimizer_and_scheduler(model, lr=args.lr, max_steps=args.steps)
-    trainer = Trainer(model=model, optimizer=opt, scheduler=sched, device=device, log_interval=10, save_dir=args.save_dir)
-    step = 0
+    opt, _ = make_optimizer_and_scheduler(model, lr=args.lr, max_steps=args.steps)
+    dataloader = make_multi_species_genome_data_loader(args.batch, infinite=False, num_workers=2)
+    trainer = Trainer(
+        model=model, dataloader=dataloader,optimizer=opt,device=device,mask_token_id=None,
+    )
     for epoch in range(args.epochs):
-        loader = make_multi_species_genome_data_loader(args.batch, infinite=False, num_workers=2)
-        step, avg_loss = trainer.train_epoch(loader, step_start=step, max_steps=args.steps, amtm_cfg={"enabled": False})
-        print(f"epoch {epoch} finished, avg_loss={avg_loss:.4f}")
-        trainer.save(step)
+        metrics = trainer.train_epoch(epoch, log_every=10, max_batches=args.steps)
+        print(f"epoch {epoch} finished, metrics={metrics}")
+        trainer.save_checkpoint(epoch)
 
 
 if __name__ == "__main__":

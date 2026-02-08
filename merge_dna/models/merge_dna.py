@@ -22,7 +22,7 @@ class MergeDNAModel(nn.Module):
 
 
     def forward(self, x):
-        merged, source_maps = self.local_encoder.forward(x)
+        merged, source_maps, merge_scores = self.local_encoder.forward(x)
         latent = self.latent_encoder.forward(merged, src_mask=None, src_key_padding_mask=None)
         decoded = self.latent_decoder.forward(latent)
         logits = self.local_decoder.forward(decoded, source_maps)
