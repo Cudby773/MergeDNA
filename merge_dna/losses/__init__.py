@@ -1,5 +1,6 @@
-from .merged_token_reconstruction import merged_token_reconstruction_loss
+from .adaptive_mtm import sample_topk_from_scores, mask_base_positions_from_merged_selection
 
 __all__ = [
-    "merged_token_reconstruction_loss"
+    "sample_topk_from_scores",
+    "mask_base_positions_from_merged_selection"
 ]

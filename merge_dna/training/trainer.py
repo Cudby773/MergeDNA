@@ -1,11 +1,13 @@
 import torch
-import torch.nn.functional as F
 from torch import nn
-from typing import Optional, Dict, Any, Tuple
+import torch.nn.functional as F
+from typing import Optional
+from pathlib import Path
+
 from merge_dna.models import (
     LocalEncoder, MergeDNAModel
 )
-from pathlib import Path
+from merge_dna.losses import sample_topk_from_scores, mask_base_positions_from_merged_selection
 
 
 def load_checkpoint(path: str, model, optimizer=None, device="cpu"):
@@ -21,7 +23,7 @@ def load_checkpoint(path: str, model, optimizer=None, device="cpu"):
 def ensure_mask_token_in_embedding(local_encoder: LocalEncoder, mask_token_id: int):
     """
     Ensure the LocalEncoder embedding matrix supports mask_token_id. If mask_token_id == vocab_size,
-    we create a new embedding with vocab_size+1 rows, copy weights, and initialize the mask embedding as the mean.
+    create a new embedding with vocab_size+1 rows, copy weights, and initialize the mask embedding as the mean.
     This mutates local_enc.emb in-place.
     """
     emb: nn.Embedding = local_encoder.emb
@@ -32,7 +34,6 @@ def ensure_mask_token_in_embedding(local_encoder: LocalEncoder, mask_token_id: i
         raise ValueError("This helper only supports adding a single mask token at index == vocab_size")
     new_vocab = vocab_size + 1
     new_emb = nn.Embedding(new_vocab, d_model)
-    # copy old weights
     with torch.no_grad():
         new_emb.weight[:vocab_size].copy_(emb.weight)
         # set mask embedding to mean of previous embeddings
@@ -40,78 +41,6 @@ def ensure_mask_token_in_embedding(local_encoder: LocalEncoder, mask_token_id: i
         new_emb.weight[vocab_size : vocab_size + 1].copy_(mean_emb)
     local_encoder.emb = new_emb
     return
-
-
-def sample_topk_from_scores(scores: torch.Tensor, K: int, deterministic: bool = False) -> torch.Tensor:
-    """
-    scores: (B, M) positive scores (not necessarily normalized)
-    returns: mask (B, M) boolean with exactly K True per row
-    deterministic -> top-K, otherwise sample without replacement proportional to scores.
-    """
-    B, M = scores.shape
-    if K <= 0:
-        return torch.zeros((B, M), dtype=torch.bool, device=scores.device)
-    if K >= M:
-        return torch.ones((B, M), dtype=torch.bool, device=scores.device)
-
-    if deterministic:
-        topk_idx = torch.topk(scores, K, dim=1).indices  # (B, K)
-        mask = torch.zeros_like(scores, dtype=torch.bool)
-        bs = torch.arange(B, device=scores.device).unsqueeze(1).expand(-1, K)
-        mask[bs, topk_idx] = True
-        return mask
-    else:
-        probs = scores / (scores.sum(dim=1, keepdim=True) + 1e-9)
-        # torch.multinomial wants non-negative numbers, sampling without replacement
-        idx = torch.multinomial(probs, num_samples=K, replacement=False)  # (B, K)
-        mask = torch.zeros_like(scores, dtype=torch.bool)
-        bs = torch.arange(B, device=scores.device).unsqueeze(1).expand(-1, K)
-        mask[bs, idx] = True
-        return mask
-
-
-def mask_base_positions_from_merged_selection(
-    x: torch.LongTensor,
-    final_source_map: torch.LongTensor,
-    merged_mask: torch.BoolTensor,
-    mask_token_id: int
-):
-    """
-    Robust mapping: if final_source_map shorter than x, only mask positions that have a mapping.
-    Also supports final_source_map containing -1 for unmapped positions.
-    Returns x_masked (B, L_x) and base_mask (B, L_x) boolean.
-    """
-    B, L_x = x.shape
-    Bm, L_map = final_source_map.shape
-    assert B == Bm, f"batch size mismatch between x {B} and final_source_map {Bm}"
-
-    # merged_mask: (B, M)
-    if merged_mask.ndim != 2:
-        raise ValueError(f"merged_mask must be 2D (B, M) but got {merged_mask.shape}")
-
-    # If final_source_map may contain -1 for unmapped positions, clamp/gather safely:
-    # Build base_mask of shape (B, L_x) initialized False
-    base_mask = torch.zeros((B, L_x), dtype=torch.bool, device=x.device)
-
-    # We'll only fill the prefix that final_source_map covers
-    L_common = min(L_x, L_map)
-    if L_common == 0:
-        return x.clone(), base_mask
-
-    # Use gather, but ensure indices are valid: clamp negative indices to 0, and then mask them out later
-    gather_idx = final_source_map[:, :L_common].clamp(min=0)   # (B, L_common)
-    merged_mask_int = merged_mask.long()                       # (B, M)
-    gathered = torch.gather(merged_mask_int, dim=1, index=gather_idx)  # (B, L_common)
-
-    # Where final_source_map had -1, we should set gathered to 0
-    invalid_pos = final_source_map[:, :L_common] < 0
-    gathered[invalid_pos] = 0
-
-    base_mask[:, :L_common] = gathered.bool()
-    x_masked = x.clone()
-    x_masked[base_mask] = mask_token_id
-    return x_masked, base_mask
-
 
 
 class Trainer:
@@ -158,7 +87,7 @@ class Trainer:
         # ensure embedding is on device
         self.local_encoder.emb.to(self.device)
 
-        # loss function for CE (we will handle masked averaging manually for AMTM)
+        # loss function for CE
         self.loss_fn = nn.CrossEntropyLoss(reduction="none")  # per-position losses
         
         
@@ -193,7 +122,7 @@ class Trainer:
         print(f"[checkpoint] saved to {path}")
 
 
-    def compute_losses(self, x: torch.LongTensor) -> Tuple[torch.Tensor, Dict[str, float]]:
+    def compute_losses(self, x: torch.LongTensor) -> tuple[torch.Tensor, dict[str, float]]:
         """
         x: (B, L) base token ids
         returns: total_loss (scalar), losses dict
@@ -207,10 +136,10 @@ class Trainer:
         # ---------------------------
         # 1) Full MTR (end-to-end)
         # ---------------------------
-        merged, source_maps, merge_scores_list = model.local_encoder.forward(x)  # merged: (B, M, D) ; source_maps: list -> last is final map (B, L)
-        final_source_map = source_maps[-1]  # mapping base pos -> merged idx
+        merged, source_maps, merge_scores_list = model.local_encoder.forward(x)  # merged: (B, M, D)
+        final_source_map = source_maps[-1] 
         latent = model.latent_encoder.forward(merged)                 # (B, M, d_model)
-        decoded_latent = model.latent_decoder.forward(latent)        # (B, M, out_dim) usually out_dim==embed_dim
+        decoded_latent = model.latent_decoder.forward(latent)        # (B, M, out_dim)
         logits = model.local_decoder.forward(decoded_latent, source_maps)  # (B, L, V)
 
         # CE over all base positions (flatten)
@@ -238,15 +167,13 @@ class Trainer:
         merge_scores = merge_scores_list[-1]
         merged_mask = sample_topk_from_scores(merge_scores, K=self.K, deterministic=self.deterministic_selection)  # (B, M) bool
 
-        # map merged selection -> base level masked positions
         x_masked, base_mask = mask_base_positions_from_merged_selection(
             x, 
             final_source_map, 
             merged_mask,
             mask_token_id=self.mask_token_id
         )
-        # forward masked input
-        merged_masked, source_maps_masked, _ = model.local_encoder.forward(x_masked)  # same pipeline, model trains on this pass too
+        merged_masked, source_maps_masked, _ = model.local_encoder.forward(x_masked) 
         latent_masked = model.latent_encoder.forward(merged_masked)
         decoded_masked = model.latent_decoder.forward(latent_masked)
         logits_masked = model.local_decoder.forward(decoded_masked, source_maps_masked)  # (B, L, V)
@@ -274,7 +201,7 @@ class Trainer:
         return total_loss, metrics
 
 
-    def train_step(self, batch: torch.LongTensor, epoch: int) -> Dict[str, Any]:
+    def train_step(self, batch: torch.LongTensor, epoch: int) -> dict:
         """
         One optimization step given a batch of base tokens shape (B, L)
         """
@@ -300,7 +227,6 @@ class Trainer:
         for i, batch in enumerate(self.dataloader):
             if max_batches is not None and i >= max_batches:
                 break
-            # expect batch shape (B, L)
             metrics = self.train_step(batch, epoch)
             for k in running:
                 if k in metrics:
@@ -308,7 +234,6 @@ class Trainer:
             count += 1
             if i % log_every == 0:
                 print(f"[epoch {epoch}] step {i} metrics: {metrics}")
-        # average
         avg = {k: (running[k] / count if count > 0 else 0.0) for k in running}
         print(f"[epoch {epoch}] avg metrics: {avg}")
         return avg
