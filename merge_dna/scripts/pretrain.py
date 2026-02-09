@@ -10,6 +10,7 @@ from merge_dna.data import make_multi_species_genome_data_loader
 
 
 def make_model_small(vocab_size=6, embed_dim = 32, latent_d_model=64, nhead=4):
+    # Choose layer config to achieve ~50% token length
     layer_configs = [{"window_size": 16, "r": 2}, {"window_size": 16, "r": 2}, {"window_size": 16, "r": 3}, {"window_size": 16, "r": 3}]
     local_enc = LocalEncoder(vocab_size=vocab_size, d_model=embed_dim, nhead=nhead, layer_configs=layer_configs)
     latent_enc = LatentEncoder(d_model=latent_d_model, input_dim=embed_dim, nhead=nhead, num_layers=2)
@@ -31,11 +32,9 @@ def parse_args():
 
 
 def main():
-    seed = 42
     args = parse_args()
     device = args.device
     print("device:", device)
-    torch.manual_seed(seed)
     model = make_model_small().to(device)
     opt, _ = make_optimizer_and_scheduler(model, lr=args.lr, max_steps=args.steps)
     dataloader = make_multi_species_genome_data_loader(args.batch, infinite=False, num_workers=2)

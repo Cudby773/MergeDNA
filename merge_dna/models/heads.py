@@ -2,8 +2,8 @@ import torch.nn as nn
 
 class Heads(nn.Module):
     """
-    Separate heads for reconstruction / MLM as needed.
-    Here we provide a single reconstruction head (maps features back to logits).
+    Separate heads for reconstruction tasks.
+    TODO: further implementations
     """
     def __init__(self, d_model: int, vocab_size: int):
         super().__init__()

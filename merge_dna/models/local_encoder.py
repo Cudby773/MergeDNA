@@ -110,7 +110,6 @@ class LocalEncoder(nn.Module):
             merge_scores_list: per layer scores
         """
         x = self.emb(x)
-        print(f'Local encoder, x shape: {x.shape}')
         source_maps = []
         merge_scores_list = []
         for layer in self.layers:
@@ -119,5 +118,4 @@ class LocalEncoder(nn.Module):
             source_maps.append(source_index)
             merge_scores_list.append(merge_scores)  # (B, M_layer)
             x = merged  # next layer runs on compressed sequence
-            print(f'Local encoder, x shape: {x.shape}')
         return x, source_maps, merge_scores_list
