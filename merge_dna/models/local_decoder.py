@@ -50,7 +50,7 @@ class LocalDecoder(nn.Module):
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.layer_configs = layer_configs
-        self.unmerge = TokenUnmerge(normalize=normalize_unmerge)
+        self.token_unmerge = TokenUnmerge(normalize=normalize_unmerge)
         self.layers = nn.ModuleList()
         for cfg in layer_configs:
             W = cfg['window_size']            
@@ -70,7 +70,7 @@ class LocalDecoder(nn.Module):
             logits: (B, L_orig, V)
         """
         x = merged_feats
-        x = self.unmerge(x, source_maps)
+        x = self.token_unmerge(x, source_maps)
         for layer in self.layers:
             x = layer(x) 
         
