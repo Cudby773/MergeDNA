@@ -16,7 +16,7 @@ class LocalAttention(nn.Module):
         self.ln2 = nn.LayerNorm(d_model)
 
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, int]:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: (B, L, D)
@@ -41,7 +41,4 @@ class LocalAttention(nn.Module):
         ff = self.ff(x_windows_attn)
         x_windows_attn = self.ln2(x_windows_attn + ff)
 
-        # unfold back to (B, L_trunc, D)
-        x_attn_unfolded = x_windows_attn.view(B, num_windows * W, D)
-
-        return x_attn_unfolded, x_windows_attn, num_windows
+        return x_windows_attn

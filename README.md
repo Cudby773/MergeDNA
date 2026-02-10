@@ -1,4 +1,4 @@
-## TODOs
+## Installation
 
-- Refactor losses from trainer.py into losses/...
-- Implement at least one benchmark experiment test
+pip install (-e) .
+pip install -r requirements.txt 

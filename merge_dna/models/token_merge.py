@@ -19,7 +19,6 @@ class TokenMerge(nn.Module):
 
         self.register_buffer("_pos_a", None)   
         self.register_buffer("_pos_b", None)   
-        self.register_buffer("_unm_idx", None)
 
 
     def _ensure_buffers(self, T: int, device: torch.device):

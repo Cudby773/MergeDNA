@@ -9,5 +9,10 @@ description = "mergeDNA reimplementation"
 dependencies = [
     "torch",
     "matplotlib",
-    "numpy"
+    "numpy",
+    "biopython",
+    "datasets",
+    "genomic_benchmarks",
+    "scikit-learn",
+    "tqdm"
 ]

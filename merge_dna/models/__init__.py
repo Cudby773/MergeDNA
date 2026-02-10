@@ -4,8 +4,8 @@ from .local_decoder import LocalDecoder
 from .latent_decoder import LatentDecoder
 from .token_merge import TokenMerge
 from .token_unmerge import TokenUnmerge
-from .heads import Heads
-from .merge_dna import MergeDNAModel
+from .latent_classifier import LatentClassifier
+from .merge_dna import MergeDNAModel, MergeDNAEncoderModel
 
 __all__ = [
     "LocalEncoder",
@@ -14,6 +14,7 @@ __all__ = [
     "LatentDecoder",
     "TokenMerge",
     "TokenUnmerge",
-    "Heads",
-    "MergeDNAModel"
+    "LatentClassifier",
+    "MergeDNAModel",
+    "MergeDNAEncoderModel"
 ]

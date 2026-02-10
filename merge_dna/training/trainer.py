@@ -12,7 +12,7 @@ from merge_dna.losses import sample_topk_from_scores, mask_base_positions_from_m
 
 def load_checkpoint(path: str, model, optimizer=None, device="cpu"):
     ckpt = torch.load(path, map_location=device)
-    model.load_state_dict(ckpt["model"])
+    model.load_state_dict(ckpt["model"], strict=False)
     if optimizer is not None:
         optimizer.load_state_dict(ckpt["optimizer"])
     step = ckpt.get("step", 0)
@@ -71,25 +71,18 @@ class Trainer:
         self.lambda_latent = lambda_latent
         self.deterministic_selection = deterministic_selection
 
-        # determine mask token id default: vocab_size (add if necessary)
-        # assume local_enc has attribute emb: nn.Embedding
         self.local_encoder = model.local_encoder
         vocab_size = self.local_encoder.emb.num_embeddings
         if mask_token_id is None:
             mask_token_id = vocab_size
         self.mask_token_id = mask_token_id
-        # ensure embedding supports mask token
         if mask_token_id >= vocab_size:
             ensure_mask_token_in_embedding(self.local_encoder, mask_token_id)
 
-        # move model to device
         self.model.to(self.device)
-        # ensure embedding is on device
         self.local_encoder.emb.to(self.device)
 
-        # loss function for CE
-        self.loss_fn = nn.CrossEntropyLoss(reduction="none")  # per-position losses
-        
+        self.loss_fn = nn.CrossEntropyLoss(reduction="none")
         
         self.checkpoint_every = checkpoint_every
         self.global_step = 0
@@ -115,7 +108,6 @@ class Trainer:
         path = self.checkpoint_dir / f"step_{self.global_step:07d}.pt"
         tmp_path = path.with_suffix(".pt.tmp")
 
-        # write atomically
         torch.save(ckpt, tmp_path)
         tmp_path.replace(path)
 
@@ -151,7 +143,7 @@ class Trainer:
         # ---------------------------
         # 2) Latent-only MTR (tokenizer frozen)
         # ---------------------------
-        # detach merged to prevent grads to tokenizer (TokenMerge etc)
+        # detach merged to prevent grads to tokenizer
         merged_detached = merged.detach()
         latent_det = model.latent_encoder.forward(merged_detached, token_merge=True)
         decoded_det = model.latent_decoder(latent_det)

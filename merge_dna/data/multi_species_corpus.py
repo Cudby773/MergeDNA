@@ -3,18 +3,15 @@ import gzip
 import logging
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, List, Tuple
-
 from Bio import SeqIO
+
 import torch
 from torch.utils.data import IterableDataset, DataLoader, get_worker_info
 
+from .constants import DNA_MAP, PAD_ID
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-
-DNA_MAP = {"A": 0, "C": 1, "G": 2, "T": 3, "N": 4}
-PAD_ID = 5
-VOCAB_SIZE = 6
 
 
 def seq_to_ids(seq: str):

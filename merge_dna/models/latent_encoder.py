@@ -16,6 +16,7 @@ class LatentEncoder(nn.Module):
         dim_feedforward: hidden size in feedforward layers.
         dropout: dropout probability.
         max_len: max positional encoding length.
+        activation: activation function
         norm_first: whether to apply LayerNorm first in TransformerEncoderLayer.
     Input:
         x: (batch, seq_len, input_dim)
@@ -60,7 +61,6 @@ class LatentEncoder(nn.Module):
         self._reset_parameters()
 
     def _reset_parameters(self):
-        # follow PyTorch transformer default initialization
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
@@ -78,11 +78,11 @@ class LatentEncoder(nn.Module):
             L = x.shape[1]
             desired_r = L // 2
             self.token_merge.r = int(desired_r)
-            merged, prev_to_new, _ = self.token_merge(x, x)
+            merged, source_map, _ = self.token_merge(x, x)
             merged = self.pos_enc(merged)
         
             latent = self.transformer_encoder.forward(merged, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
-            latent = self.token_unmerge.forward(latent, prev_to_new)
+            latent = self.token_unmerge.forward(latent, [source_map])
         else:
             latent = self.transformer_encoder.forward(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
         return latent

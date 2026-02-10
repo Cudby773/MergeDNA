@@ -16,12 +16,7 @@ def compose_source_maps(source_maps: list[torch.LongTensor]) -> torch.Tensor:
    
 class TokenUnmerge(nn.Module):
     """
-    Inverse of TokenMerge.
-    Expects:
-        merged: (B, M, D)
-        source_index: (B, L) 
-    Returns:
-        unmerged: (B, L, D)
+    Reverses a series of token merges represented by a list of source maps
     """
     def __init__(self, normalize: bool = True, eps: float = 1e-6):
         super().__init__()
@@ -29,33 +24,29 @@ class TokenUnmerge(nn.Module):
         self.eps = eps
 
 
-    def forward(self, merged_feats: torch.Tensor, source_index: torch.LongTensor) -> torch.Tensor:
+    def forward(self, merged_feats: torch.Tensor, source_maps: list[torch.LongTensor]) -> torch.Tensor:
         """
         Args:
             merged_feats: (B, M, D)
-            source_index:    (B, L) long mapping each original position to merged index in [0..M-1]
-
         Returns:
-            unmerged_feats: (B, L, D) where position j receives merged_feats[..., source_index[..., j], :]
+            unmerged_feats: (B, L, D)
         """
-        B, M, D = merged_feats.shape
-        B2, L = source_index.shape
-        assert B == B2, "batch mismatch between merged_feats and source_index"
+        x = merged_feats
+        for source_map in source_maps[::-1]:
+            B, M, D = x.shape
+            B2, L = source_map.shape
+            if not B == B2:
+                raise Exception(f"Batch mismatch between x {B} and source_map {B2}")
 
-        device = merged_feats.device
-        # Optionally normalize merged_feats by counts per merged token
-        if self.normalize:
-            # compute counts per merged token: (B, M)
-            ones = torch.ones((B, L), dtype=merged_feats.dtype, device=device)
-            counts = torch.zeros((B, M), dtype=merged_feats.dtype, device=device)
-            counts = counts.scatter_add_(1, source_index, ones)  # (B, M)
-            # clamp to avoid div by zero if some merged tokens are unused (shouldn't happen)
-            counts = counts.clamp_min(self.eps)
-            # divide merged_feats by counts per merged token
-            merged_feats = merged_feats / counts.unsqueeze(-1)  # (B, M, 1) -> broadcast
+            device = merged_feats.device
+            if self.normalize:
+                ones = torch.ones((B, L), dtype=x.dtype, device=device)
+                counts = torch.zeros((B, M), dtype=x.dtype, device=device)
+                counts = counts.scatter_add_(1, source_map, ones)  # (B, M)
+                counts = counts.clamp_min(self.eps)
+                x = x / counts.unsqueeze(-1)  # (B, M, 1)
 
-        # gather: expand source_index to (B, L, D) index tensor and gather along dim=1
-        source_idx_exp = source_index.unsqueeze(-1).expand(-1, -1, D)  # (B, L, D)
-        unmerged = torch.gather(merged_feats, dim=1, index=source_idx_exp)  # (B, L, D)
-        return unmerged
+            source_map_expanded = source_map.unsqueeze(-1).expand(-1, -1, D)  # (B, L, D)
+            x = torch.gather(x, dim=1, index=source_map_expanded)  # (B, L, D)
+        return x
 

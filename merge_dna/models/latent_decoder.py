@@ -73,7 +73,6 @@ class LatentDecoder(nn.Module):
         self._reset_parameters()
 
     def _reset_parameters(self):
-        # follow PyTorch transformer default initialization style
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
