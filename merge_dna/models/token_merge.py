@@ -26,9 +26,6 @@ class TokenMerge(nn.Module):
         Create pos_a and pos_b for sequence length T and register them as buffers
         (if not already present or length changed). unm_idx depends on batch and is set later.
         """
-        # require even T for this simple implementation
-        # if T % 2 != 0:
-        #     raise ValueError(f"TokenMerge currently expects even sequence length T, got {T}")
 
         pos_a = torch.arange(0, T, 2, device=device, dtype=torch.long)  # (Ta,)
         pos_b = torch.arange(1, T, 2, device=device, dtype=torch.long)  # (Tb,)

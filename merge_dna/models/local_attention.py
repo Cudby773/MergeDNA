@@ -21,9 +21,7 @@ class LocalAttention(nn.Module):
         Args:
             x: (B, L, D)
         Returns:
-            x_attn_unfolded: (B, L_trunc, D)  -- attended, unfolded (with padding kept)
             x_windows_attn: (B * num_windows, W, D) -- folded windows after attn
-            num_windows: int
         """
         B, L, D = x.shape
         W = self.window_size
