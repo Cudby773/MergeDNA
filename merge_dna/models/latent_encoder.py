@@ -3,6 +3,7 @@ import torch.nn as nn
 from .positional_encoding import PositionalEncoding
 from .token_merge import TokenMerge
 from .token_unmerge import TokenUnmerge
+from typing import Optional
 
 class LatentEncoder(nn.Module):
     """
@@ -66,23 +67,30 @@ class LatentEncoder(nn.Module):
                 nn.init.xavier_uniform_(p)
 
 
-    def forward(self, x: torch.Tensor, src_mask=None, src_key_padding_mask=None, token_merge=False):
+    def forward(
+        self, 
+        x: torch.Tensor,
+        src_mask=None, 
+        src_key_padding_mask=None, 
+        token_merge=False
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         x: (B, L, input_dim)
-        returns memory: (B, L, d_model)
+        returns latent: (B, L, d_model) and source_map if token_merge is True
         """
         x = self.input_proj(x)               # (B, L, d_model)
-        x = self.pos_enc(x)                  # (L, B, d_model)
+        x = self.pos_enc(x)                  # (B, L, d_model)
         
         if token_merge:
             L = x.shape[1]
             desired_r = L // 2
-            self.token_merge.r = int(desired_r)
-            merged, source_map, _ = self.token_merge(x, x)
+            self.token_merge.r = desired_r
+            merged, source_map = self.token_merge(x, x)
             merged = self.pos_enc(merged)
         
             latent = self.transformer_encoder.forward(merged, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
             latent = self.token_unmerge.forward(latent, [source_map])
+            return latent, source_map
         else:
             latent = self.transformer_encoder.forward(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
-        return latent
+            return latent, None

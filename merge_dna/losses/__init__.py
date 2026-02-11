@@ -1,6 +1,5 @@
-from .adaptive_mtm import sample_topk_from_scores, mask_base_positions_from_merged_selection
+from .adaptive_mtm import sample_k_local_tokens_from_source_map
 
 __all__ = [
-    "sample_topk_from_scores",
-    "mask_base_positions_from_merged_selection"
+    "sample_k_local_tokens_from_source_map"
 ]

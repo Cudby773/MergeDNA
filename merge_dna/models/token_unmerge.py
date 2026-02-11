@@ -29,24 +29,24 @@ class TokenUnmerge(nn.Module):
         Args:
             merged_feats: (B, M, D)
         Returns:
-            unmerged_feats: (B, L, D)
+            unmerged_feats: (B, N, D)
         """
         x = merged_feats
         for source_map in source_maps[::-1]:
             B, M, D = x.shape
-            B2, L = source_map.shape
+            B2, N = source_map.shape
             if not B == B2:
                 raise Exception(f"Batch mismatch between x {B} and source_map {B2}")
 
             device = merged_feats.device
             if self.normalize:
-                ones = torch.ones((B, L), dtype=x.dtype, device=device)
+                ones = torch.ones((B, N), dtype=x.dtype, device=device)
                 counts = torch.zeros((B, M), dtype=x.dtype, device=device)
                 counts = counts.scatter_add_(1, source_map, ones)  # (B, M)
                 counts = counts.clamp_min(self.eps)
                 x = x / counts.unsqueeze(-1)  # (B, M, 1)
 
-            source_map_expanded = source_map.unsqueeze(-1).expand(-1, -1, D)  # (B, L, D)
-            x = torch.gather(x, dim=1, index=source_map_expanded)  # (B, L, D)
+            source_map_expanded = source_map.unsqueeze(-1).expand(-1, -1, D)  # (B, N, D)
+            x = torch.gather(x, dim=1, index=source_map_expanded)  # (B, N, D)
         return x
 

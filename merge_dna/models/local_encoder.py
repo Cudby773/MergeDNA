@@ -40,7 +40,7 @@ class LocalMergeBlock(nn.Module):
         return source_index_by_abs
 
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # x: (B, L, D) token indices
         B, L, D = x.shape
         W = self.window_size
@@ -49,28 +49,25 @@ class LocalMergeBlock(nn.Module):
         pad_len = (W - (L % W)) % W
         if pad_len > 0:
             x = F.pad(x, (0, 0, 0, pad_len)) 
-        L_trunc = x.shape[1]
-        num_windows = L_trunc // W
+        L_pad = x.shape[1]
+        num_windows = L_pad // W
 
-        x_windows_attn = self.attn.forward(x)  # (B, L_trunc, D)
+        x_windows_attn = self.attn.forward(x)  # (B, L_pad, D)
 
-        merged_windows, source_map_windows, merge_scores_windows = self.token_merge.forward(x_windows_attn, x_windows_attn)
+        merged_windows, source_map_windows = self.token_merge.forward(x_windows_attn, x_windows_attn)
         # merged_windows: (B * num_windows, M_w, D)
         # source_map_windows: (B * num_windows, W)
         # merge_scores: (B*num_windows, D)        
         
         merged = merged_windows.view(B, num_windows * self.M_w, D)
-        merge_scores = merge_scores_windows.view(B, num_windows * self.M_w)
-        source_index_by_abs = self.build_source_index(source_map_windows, B, W, num_windows, L_trunc, device)
+        source_index_by_abs = self.build_source_index(source_map_windows, B, W, num_windows, L_pad, device)
 
         # Finally, trim padding if any
         if pad_len > 0:
             source_index_by_abs = source_index_by_abs[:, :L]
             valid_windows = (L + W - 1) // W
             merged = merged[:, :valid_windows * self.M_w, :]
-            merge_scores = merge_scores[:, :valid_windows * self.M_w]
-
-        return merged, source_index_by_abs, merge_scores
+        return merged, source_index_by_abs
 
 
 class LocalEncoder(nn.Module):
@@ -96,20 +93,19 @@ class LocalEncoder(nn.Module):
             self.layers.append(block)
 
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.LongTensor], list[torch.Size]]:
         """
         x: (B, L, D)
         Returns:
             x: compressed representation after last local layer
-            source_maps: list of source_index maps per layer
-            merge_scores_list: per layer scores
+            source_maps: list of source_map per layer
         """
         x = self.emb(x)
         source_maps = []
-        merge_scores_list = []
+        merged_shapes = []
         for layer in self.layers:
-            merged, source_index, merge_scores = layer(x)
-            source_maps.append(source_index)
-            merge_scores_list.append(merge_scores)  # (B, M_layer)
+            merged, source_map = layer(x)
+            source_maps.append(source_map)
+            merged_shapes.append(merged.shape)
             x = merged  # next layer runs on compressed sequence
-        return x, source_maps, merge_scores_list
+        return x, source_maps, merged_shapes

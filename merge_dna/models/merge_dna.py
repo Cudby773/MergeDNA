@@ -19,10 +19,9 @@ class MergeDNAModel(nn.Module):
         self.local_decoder = local_decoder
 
 
-
     def forward(self, x):
         merged, source_maps, _ = self.local_encoder.forward(x)
-        latent = self.latent_encoder.forward(merged, src_mask=None, src_key_padding_mask=None)
+        latent, _ = self.latent_encoder.forward(merged, src_mask=None, src_key_padding_mask=None)
         decoded = self.latent_decoder.forward(latent)
         logits = self.local_decoder.forward(decoded, source_maps)
         return logits
@@ -41,5 +40,5 @@ class MergeDNAEncoderModel(nn.Module):
 
     def forward(self, x):
         merged, _, _ = self.local_encoder.forward(x)
-        latent = self.latent_encoder.forward(merged, src_mask=None, src_key_padding_mask=None)
+        latent, _ = self.latent_encoder.forward(merged, src_mask=None, src_key_padding_mask=None)
         return latent

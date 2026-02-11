@@ -39,14 +39,14 @@ class TokenMerge(nn.Module):
             self._pos_b = pos_b
 
 
-    def forward(self, x: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: (B, T_prev, C) input features (the sequence passed to this TokenMerge)
             k: (B, T_prev, C) keys used for matching (may be same as x or projected)
         Returns:
             merged: (B, M_new, C)
-            prev_to_new: (B, T_prev) long mapping from indices in this layer's input -> new merged idx (or -1)
+            source_map: (B, T_prev) long mapping from indices in this layer's input -> new merged idx (or -1)
             merge_scores: (B, M_new) float scores per merged token (norm or learned)
         """
         B, T_prev, C = x.shape
@@ -85,7 +85,7 @@ class TokenMerge(nn.Module):
         dst_updated = dst_updated.scatter_add(1, dst_idx.unsqueeze(-1).expand(-1, -1, C), src_sel)
 
         merged = torch.cat([unm, dst_updated], dim=1)  # (B, M_new, C) where M_new = (Ta - r) + Tb
-        prev_to_new = torch.full((B, T_prev), -1, dtype=torch.long, device=device)
+        source_map = torch.full((B, T_prev), -1, dtype=torch.long, device=device)
 
         if unm_sorted.numel() > 0:
             if pos_a.dim() == 1:
@@ -95,7 +95,7 @@ class TokenMerge(nn.Module):
             unm_prev_pos = torch.gather(pos_a_expand, 1, unm_sorted)  # (B, n_unm) absolute prev positions
             n_unm = unm_sorted.shape[1]
             new_unm_idx = torch.arange(n_unm, dtype=torch.long, device=device).unsqueeze(0).expand(B, -1)
-            prev_to_new.scatter_(1, unm_prev_pos, new_unm_idx)
+            source_map.scatter_(1, unm_prev_pos, new_unm_idx)
 
         n_unm = unm_sorted.shape[1] if unm_sorted.numel() > 0 else 0
         if pos_b is not None and pos_b.numel() > 0:
@@ -104,7 +104,7 @@ class TokenMerge(nn.Module):
             else:
                 pos_b_expand = pos_b
             b_new_indices = (torch.arange(Tb, dtype=torch.long, device=device).unsqueeze(0) + n_unm).expand(B, -1)
-            prev_to_new.scatter_(1, pos_b_expand.long().to(device), b_new_indices)
+            source_map.scatter_(1, pos_b_expand.long().to(device), b_new_indices)
 
         if src_idx.numel() > 0:
             # src_idx are indices into a (0..Ta-1) -> map to prev positions via pos_a_expand
@@ -114,13 +114,9 @@ class TokenMerge(nn.Module):
                 pos_a_expand = pos_a
             src_prev_pos = torch.gather(pos_a_expand, 1, src_idx)  # (B, r) absolute prev positions
             dst_new = (dst_idx + n_unm).long()
-            prev_to_new.scatter_(1, src_prev_pos.long().to(device), dst_new.long().to(device))
+            source_map.scatter_(1, src_prev_pos.long().to(device), dst_new.long().to(device))
 
 
-        # --- compute merge_scores for AMTM (simple L2-norm of merged features) ---
-        merge_scores = merged.norm(dim=-1)  # (B, M_new)
-        self.last_scores = merge_scores.detach()
-
-        return merged, prev_to_new, merge_scores
+        return merged, source_map
 
     

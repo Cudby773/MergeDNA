@@ -119,7 +119,7 @@ def main():
     print(f"Loaded checkpoint at epoch {start_epoch}, step {step}, config={ckpt_config}")
     
     encoder_model = MergeDNAEncoderModel(model.local_encoder, model.latent_encoder)
-    classifier = LatentClassifier(encoder_model, num_classes=1, use_cls_token=True)
+    classifier = LatentClassifier(encoder_model, num_classes=1, use_cls_token=False)
     classifier.to(device)
 
     if args.mode == 'test':

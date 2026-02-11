@@ -5,9 +5,9 @@ from typing import Optional
 from pathlib import Path
 
 from merge_dna.models import (
-    LocalEncoder, MergeDNAModel
+    LocalEncoder, MergeDNAModel, TokenUnmerge
 )
-from merge_dna.losses import sample_topk_from_scores, mask_base_positions_from_merged_selection
+from merge_dna.losses import sample_k_local_tokens_from_source_map
 
 
 def load_checkpoint(path: str, model, optimizer=None, device="cpu"):
@@ -41,6 +41,32 @@ def ensure_mask_token_in_embedding(local_encoder: LocalEncoder, mask_token_id: i
         new_emb.weight[vocab_size : vocab_size + 1].copy_(mean_emb)
     local_encoder.emb = new_emb
     return
+
+
+def merged_padding_mask_from_source_map(source_maps: list[torch.LongTensor],
+                                        orig_mask: torch.BoolTensor,
+                                        merged_shapes: list[torch.Size]):
+    # orig_mask:   (B, N) bool, True = masked
+    if not len(source_maps) == len(merged_shapes):
+        raise Exception('Should be same number of maps as shapes')
+    new_mask = orig_mask
+    for idx, source_map in enumerate(source_maps):
+        B, _ = source_map.shape
+        device = source_map.device
+        merged_masks = []
+        num_groups = merged_shapes[idx][1]
+        for b in range(B):
+            sm = source_map[b, :]    
+            m = orig_mask[b].to(torch.long)   # 1 if masked, 0 if keep
+            # count unmasked per group
+            unmasked_per_group = torch.zeros(num_groups, device=device, dtype=torch.long)
+            unmasked_per_group.scatter_add_(0, sm, (1 - m))  # adds 1 for each unmasked source token
+            # group is masked iff unmasked count == 0
+            group_mask = (unmasked_per_group == 0)          # True = masked
+            merged_masks.append(group_mask)
+        
+        new_mask = torch.stack(merged_masks, dim=0)   # (B, M_new)
+    return new_mask
 
 
 class Trainer:
@@ -116,28 +142,27 @@ class Trainer:
 
     def compute_losses(self, x: torch.LongTensor) -> tuple[torch.Tensor, dict[str, float]]:
         """
-        x: (B, L) base token ids
+        x: (B, N) base token ids
         returns: total_loss (scalar), losses dict
         """
         model = self.model
         device = self.device
         x = x.to(device)
 
-        B, L = x.shape
+        B, N = x.shape
 
         # ---------------------------
         # 1) Full MTR (end-to-end)
         # ---------------------------
-        merged, source_maps, merge_scores_list = model.local_encoder.forward(x)  # merged: (B, M, D)
-        final_source_map = source_maps[-1] 
-        latent = model.latent_encoder.forward(merged)                 # (B, M, d_model)
-        decoded_latent = model.latent_decoder.forward(latent)        # (B, M, out_dim)
-        logits = model.local_decoder.forward(decoded_latent, source_maps)  # (B, L, V)
+        merged, source_maps, _ = model.local_encoder.forward(x)  # merged: (B, L, D)
+        latent, _ = model.latent_encoder.forward(merged)                 # (B, L, d_model)
+        decoded_latent = model.latent_decoder.forward(latent)        # (B, L, out_dim)
+        logits = model.local_decoder.forward(decoded_latent, source_maps)  # (B, N, V)
 
         # CE over all base positions (flatten)
-        logits_flat = logits.view(-1, logits.size(-1))  # (B*L, V)
-        targets_flat = x.view(-1)                       # (B*L,)
-        perpos_loss = self.loss_fn(logits_flat, targets_flat).view(B, L)  # (B, L)
+        logits_flat = logits.view(-1, logits.size(-1))  # (B*N, V)
+        targets_flat = x.view(-1)                       # (B*N,)
+        perpos_loss = self.loss_fn(logits_flat, targets_flat).view(B, N)  # (B, N)
         L_MTR = perpos_loss.mean()
 
         # ---------------------------
@@ -145,37 +170,44 @@ class Trainer:
         # ---------------------------
         # detach merged to prevent grads to tokenizer
         merged_detached = merged.detach()
-        latent_det = model.latent_encoder.forward(merged_detached, token_merge=True)
+        latent_det, latent_source_map = model.latent_encoder.forward(merged_detached, token_merge=True)
         decoded_det = model.latent_decoder(latent_det)
         logits_det = model.local_decoder(decoded_det, source_maps)
-        perpos_loss2 = self.loss_fn(logits_det.view(-1, logits_det.size(-1)), targets_flat).view(B, L)
+        perpos_loss2 = self.loss_fn(logits_det.view(-1, logits_det.size(-1)), targets_flat).view(B, N)
         L_MTR_latent = perpos_loss2.mean()
 
 
         # ---------------------------
         # 3) AMTM (Adaptive Masked Token Modeling)
-        # ---------------------------
-        # sample / select top-K merged tokens per sample
-        merge_scores = merge_scores_list[-1]
-        merged_mask = sample_topk_from_scores(merge_scores, K=self.K, deterministic=self.deterministic_selection)  # (B, M) bool
-
-        x_masked, base_mask = mask_base_positions_from_merged_selection(
-            x, 
-            final_source_map, 
-            merged_mask,
-            mask_token_id=self.mask_token_id
+        # ---------------------------  
+        local_tokens = sample_k_local_tokens_from_source_map(latent_source_map)
+        local_tokens_mask = torch.zeros((B, latent_source_map.shape[1]), dtype=torch.bool, device=local_tokens.device)
+        B, _ = local_tokens.shape
+        batch_indices = torch.arange(B, device=local_tokens.device).unsqueeze(1)
+        local_tokens_mask[batch_indices, local_tokens] = True
+        local_tokens_mask = local_tokens_mask.unsqueeze(-1)
+        unmerger = TokenUnmerge(normalize=False)
+        base_mask = unmerger.forward(local_tokens_mask, source_maps)
+        base_mask = base_mask.squeeze()
+        mask_bool = base_mask.to(torch.bool)
+        x_masked = torch.where(
+            mask_bool,
+            self.mask_token_id,
+            x
         )
-        merged_masked, source_maps_masked, _ = model.local_encoder.forward(x_masked) 
-        latent_masked = model.latent_encoder.forward(merged_masked)
+        
+        merged_masked, source_maps_masked, merged_shapes = model.local_encoder.forward(x_masked) 
+        merged_bool_mask = merged_padding_mask_from_source_map(source_maps_masked, mask_bool, merged_shapes)
+        latent_masked, _ = model.latent_encoder.forward(merged_masked, src_key_padding_mask=merged_bool_mask)
         decoded_masked = model.latent_decoder.forward(latent_masked)
-        logits_masked = model.local_decoder.forward(decoded_masked, source_maps_masked)  # (B, L, V)
+        logits_masked = model.local_decoder.forward(decoded_masked, source_maps_masked)  
 
         # compute AMTM loss: negative log-likelihood over masked base positions
-        logp = F.log_softmax(logits_masked, dim=-1)  # (B, L, V)
+        logp = F.log_softmax(logits_masked, dim=-1)  
         # gather probability of true tokens
-        true_logp = logp.gather(dim=-1, index=x.unsqueeze(-1)).squeeze(-1)  # (B, L)
-        masked_vals = true_logp * base_mask.float()
-        denom = base_mask.float().sum()
+        true_logp = logp.gather(dim=-1, index=x.unsqueeze(-1)).squeeze(-1)
+        masked_vals = true_logp * base_mask
+        denom = base_mask.sum()
         if denom == 0:
             L_AMTM = torch.tensor(0.0, device=device)
         else:

@@ -83,7 +83,7 @@ class LatentDecoder(nn.Module):
         returns decoded: (B, S, output_dim)
         """
         x = self.input_proj(latent)                 # (B, S, d_model)
-        x = self.pos_enc(x)                         # (S, B, d_model)
+        x = self.pos_enc(x)                         # (B, S, d_model)
         x = self.transformer_encoder(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
         decoded = self.output_proj(x)               # (B, S, output_dim)
         return decoded
