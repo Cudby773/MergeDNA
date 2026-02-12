@@ -36,7 +36,7 @@ class LocalMergeBlock(nn.Module):
         source_index_per_position = source_index_global_windows.reshape(B, num_windows * W) 
         abs_pos_flat = abs_pos.reshape(B, num_windows * W)
         source_index_by_abs = torch.full((B, L_orig), -1, dtype=torch.long, device=device)
-        source_index_by_abs.scatter_(dim=1, index=abs_pos_flat, src=source_index_per_position)        
+        source_index_by_abs = source_index_by_abs.scatter(dim=1, index=abs_pos_flat, src=source_index_per_position)        
         return source_index_by_abs
 
 
@@ -52,12 +52,11 @@ class LocalMergeBlock(nn.Module):
         L_pad = x.shape[1]
         num_windows = L_pad // W
 
-        x_windows_attn = self.attn.forward(x)  # (B, L_pad, D)
+        x_windows_attn = self.attn(x)  # (B, L_pad, D)
 
-        merged_windows, source_map_windows = self.token_merge.forward(x_windows_attn, x_windows_attn)
+        merged_windows, source_map_windows = self.token_merge(x_windows_attn, x_windows_attn)
         # merged_windows: (B * num_windows, M_w, D)
         # source_map_windows: (B * num_windows, W)
-        # merge_scores: (B*num_windows, D)        
         
         merged = merged_windows.view(B, num_windows * self.M_w, D)
         source_index_by_abs = self.build_source_index(source_map_windows, B, W, num_windows, L_pad, device)

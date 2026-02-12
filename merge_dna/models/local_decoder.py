@@ -25,7 +25,7 @@ class LocalAttentionBlock(nn.Module):
             x = F.pad(x, (0, 0, 0, pad_len)) 
         L_pad = x.shape[1]
 
-        x_windows_attn = self.attn.forward(x)  # (L_pad, B, D)
+        x_windows_attn = self.attn(x)  # (L_pad, B, D)
         x_attn = x_windows_attn.view(B, L_pad, D)
         if pad_len > 0:
             x_attn = x_attn[:, :L, :]

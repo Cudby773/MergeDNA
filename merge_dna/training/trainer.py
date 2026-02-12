@@ -43,9 +43,11 @@ def ensure_mask_token_in_embedding(local_encoder: LocalEncoder, mask_token_id: i
     return
 
 
-def merged_padding_mask_from_source_map(source_maps: list[torch.LongTensor],
-                                        orig_mask: torch.BoolTensor,
-                                        merged_shapes: list[torch.Size]):
+def merged_padding_mask_from_source_map(
+    source_maps: list[torch.LongTensor],
+    orig_mask: torch.BoolTensor,
+    merged_shapes: list[torch.Size]
+):
     # orig_mask:   (B, N) bool, True = masked
     if not len(source_maps) == len(merged_shapes):
         raise Exception('Should be same number of maps as shapes')
@@ -154,10 +156,10 @@ class Trainer:
         # ---------------------------
         # 1) Full MTR (end-to-end)
         # ---------------------------
-        merged, source_maps, _ = model.local_encoder.forward(x)  # merged: (B, L, D)
-        latent, _ = model.latent_encoder.forward(merged)                 # (B, L, d_model)
-        decoded_latent = model.latent_decoder.forward(latent)        # (B, L, out_dim)
-        logits = model.local_decoder.forward(decoded_latent, source_maps)  # (B, N, V)
+        merged, source_maps, _ = model.local_encoder(x)  # merged: (B, L, D)
+        latent, _ = model.latent_encoder(merged)                 # (B, L, d_model)
+        decoded_latent = model.latent_decoder(latent)        # (B, L, out_dim)
+        logits = model.local_decoder(decoded_latent, source_maps)  # (B, N, V)
 
         # CE over all base positions (flatten)
         logits_flat = logits.view(-1, logits.size(-1))  # (B*N, V)
@@ -170,7 +172,7 @@ class Trainer:
         # ---------------------------
         # detach merged to prevent grads to tokenizer
         merged_detached = merged.detach()
-        latent_det, latent_source_map = model.latent_encoder.forward(merged_detached, token_merge=True)
+        latent_det, latent_source_map = model.latent_encoder(merged_detached, token_merge=True)
         decoded_det = model.latent_decoder(latent_det)
         logits_det = model.local_decoder(decoded_det, source_maps)
         perpos_loss2 = self.loss_fn(logits_det.view(-1, logits_det.size(-1)), targets_flat).view(B, N)
@@ -187,7 +189,7 @@ class Trainer:
         local_tokens_mask[batch_indices, local_tokens] = True
         local_tokens_mask = local_tokens_mask.unsqueeze(-1)
         unmerger = TokenUnmerge(normalize=False)
-        base_mask = unmerger.forward(local_tokens_mask, source_maps)
+        base_mask = unmerger(local_tokens_mask, source_maps)
         base_mask = base_mask.squeeze()
         mask_bool = base_mask.to(torch.bool)
         x_masked = torch.where(
@@ -196,11 +198,11 @@ class Trainer:
             x
         )
         
-        merged_masked, source_maps_masked, merged_shapes = model.local_encoder.forward(x_masked) 
+        merged_masked, source_maps_masked, merged_shapes = model.local_encoder(x_masked) 
         merged_bool_mask = merged_padding_mask_from_source_map(source_maps_masked, mask_bool, merged_shapes)
-        latent_masked, _ = model.latent_encoder.forward(merged_masked, src_key_padding_mask=merged_bool_mask)
-        decoded_masked = model.latent_decoder.forward(latent_masked)
-        logits_masked = model.local_decoder.forward(decoded_masked, source_maps_masked)  
+        latent_masked, _ = model.latent_encoder(merged_masked, src_key_padding_mask=merged_bool_mask)
+        decoded_masked = model.latent_decoder(latent_masked)
+        logits_masked = model.local_decoder(decoded_masked, source_maps_masked)  
 
         # compute AMTM loss: negative log-likelihood over masked base positions
         logp = F.log_softmax(logits_masked, dim=-1)  

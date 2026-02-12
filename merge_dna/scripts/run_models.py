@@ -49,10 +49,10 @@ def main(device: str):
                 pass
             
         # forward
-        merged, source_index, scores = merge_dna_model.local_encoder.forward(x)         # (B, S, D)
-        latent = merge_dna_model.latent_encoder.forward(merged)                 # (B, S, input_dim) -> (B, S, d_model)
-        decoded_latent = merge_dna_model.latent_decoder.forward(latent)         # (B, S, d_model) -> (B, S, output_dim)
-        logits = merge_dna_model.local_decoder.forward(decoded_latent, source_index)  # (B, L_trunc, V)
+        merged, source_index, scores = merge_dna_model.local_encoder(x)         # (B, S, D)
+        latent = merge_dna_model.latent_encoder(merged)                 # (B, S, input_dim) -> (B, S, d_model)
+        decoded_latent = merge_dna_model.latent_decoder(latent)         # (B, S, d_model) -> (B, S, output_dim)
+        logits = merge_dna_model.local_decoder(decoded_latent, source_index)  # (B, L_trunc, V)
 
         print(f'x.shape: {x.shape}')
         print(f'merged.shape: {merged.shape}')

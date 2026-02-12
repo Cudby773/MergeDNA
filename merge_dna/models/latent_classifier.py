@@ -51,7 +51,7 @@ class LatentClassifier(nn.Module):
 
 
     def forward(self, x):
-        rep = self.encoder_model.forward(x)  # expected [B, L, D] or [B, D]
+        rep = self.encoder_model(x)  # expected [B, L, D] or [B, D]
         if not self._head_inited:
             self._init_head_from_rep(rep)
 

@@ -82,6 +82,8 @@ class TokenMerge(nn.Module):
         dst_updated = dst_updated.scatter_add(1, dst_idx.unsqueeze(-1).expand(-1, -1, C), src_sel)
 
         merged = torch.cat([unm, dst_updated], dim=1)  # (B, M_new, C) where M_new = (Ta - r) + Tb
+        
+        # Compute the source map
         source_map = torch.full((B, T_prev), -1, dtype=torch.long, device=device)
 
         if unm_sorted.numel() > 0:
@@ -101,7 +103,7 @@ class TokenMerge(nn.Module):
             else:
                 pos_b_expand = pos_b
             b_new_indices = (torch.arange(Tb, dtype=torch.long, device=device).unsqueeze(0) + n_unm).expand(B, -1)
-            source_map.scatter_(1, pos_b_expand.long().to(device), b_new_indices)
+            source_map.scatter_(1, pos_b_expand.long(), b_new_indices)
 
         if src_idx.numel() > 0:
             # src_idx are indices into a (0..Ta-1) -> map to prev positions via pos_a_expand
@@ -111,7 +113,7 @@ class TokenMerge(nn.Module):
                 pos_a_expand = pos_a
             src_prev_pos = torch.gather(pos_a_expand, 1, src_idx)  # (B, r) absolute prev positions
             dst_new = (dst_idx + n_unm).long()
-            source_map.scatter_(1, src_prev_pos.long().to(device), dst_new.long().to(device))
+            source_map.scatter_(1, src_prev_pos.long(), dst_new.long())
 
 
         return merged, source_map

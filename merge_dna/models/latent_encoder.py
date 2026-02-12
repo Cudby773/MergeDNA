@@ -88,9 +88,9 @@ class LatentEncoder(nn.Module):
             merged, source_map = self.token_merge(x, x)
             merged = self.pos_enc(merged)
         
-            latent = self.transformer_encoder.forward(merged, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
-            latent = self.token_unmerge.forward(latent, [source_map])
+            latent = self.transformer_encoder(merged, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+            latent = self.token_unmerge(latent, [source_map])
             return latent, source_map
         else:
-            latent = self.transformer_encoder.forward(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+            latent = self.transformer_encoder(x, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
             return latent, None
