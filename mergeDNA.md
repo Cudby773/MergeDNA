@@ -114,7 +114,6 @@ Is Merge's inner layer the best choice? Hyena on the tokens?
 
 ## Implementation choices
 
-- No side effects in forward
 - Didn't implement Flash Attention (as mentioned in paper) - clear optimisation
 
 Desirable test suite:
@@ -129,5 +128,6 @@ Desirable performance testing:
     - e.g. sequentially using each of the 3 loss functions
     - downweighting of latent mtr
     - encoder layer config / aggressiveness of compression
+- Merging schedule: not discussed in paper?
 
 
